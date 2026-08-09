@@ -1,0 +1,14 @@
+[package]
+name = "manta2"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gpui = "0.2.2"
+modalkit = "0.0.25"
+ropey = "1.6.1"
+tree-sitter = "0.26.12"
+
+
+[build-dependencies]
+cc = "1.0"
