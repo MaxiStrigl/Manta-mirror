@@ -1,3 +1,5 @@
+use std::ops::Range;
+use std::sync::Arc;
 use std::time::Instant;
 
 use gpui::*;
@@ -15,7 +17,7 @@ use modalkit::{
     key::TerminalKey,
 };
 use ropey::Rope;
-use tree_sitter::{InputEdit, Language, Parser};
+use tree_sitter::{InputEdit, Language, Parser, Query, StreamingIterator};
 
 unsafe extern "C" {
     fn tree_sitter_org() -> *const std::ffi::c_void;
@@ -51,10 +53,196 @@ impl History {
     }
 }
 
-struct VimEditor {
+pub struct Buffer {
     text: Rope,
+    history: History,
+    query: Arc<Query>,
+
+    parser: Parser,
+    tree: Option<tree_sitter::Tree>,
+}
+
+impl Buffer {
+    fn new(_cx: &mut Context<Self>) -> Buffer {
+        let text = Rope::new();
+        let history = History::new();
+
+        let org_language = unsafe { Language::from_raw(tree_sitter_org() as *const _) };
+        let mut parser = Parser::new();
+        parser
+            .set_language(&org_language)
+            .expect("Failed to load org langauge");
+
+        let tree = parse_rope(&mut parser, None, &text);
+
+        let query_src = r#"
+            (headline 
+             stars: (stars) @heading.stars
+             ) @heading"#;
+
+        let query =
+            Arc::new(Query::new(&org_language, query_src).expect("Failed to setup org query"));
+
+        Self {
+            text,
+            history,
+            query,
+            parser,
+            tree,
+        }
+    }
+
+    fn insert_internal(&mut self, offset: usize, chunk: &str) {
+        let start_byte = self.text.char_to_byte(offset);
+        let start_position = Self::rope_offset_to_point(&self.text, offset);
+
+        self.text.insert(offset, chunk);
+
+        let new_end_byte = self.text.char_to_byte(offset + chunk.chars().count());
+        let new_end_position =
+            Self::rope_offset_to_point(&self.text, offset + chunk.chars().count());
+
+        if let Some(tree) = &mut self.tree {
+            tree.edit(&InputEdit {
+                start_byte,
+                old_end_byte: start_byte,
+                new_end_byte,
+                start_position,
+                old_end_position: start_position,
+                new_end_position,
+            });
+        }
+
+        self.tree = parse_rope(&mut self.parser, self.tree.as_ref(), &self.text);
+    }
+
+    pub fn delete_internal(&mut self, range: Range<usize>) {
+        let start_byte = self.text.char_to_byte(range.start);
+        let start_position = Self::rope_offset_to_point(&self.text, range.start);
+        let old_end_byte = self.text.char_to_byte(range.end);
+        let old_end_position = Self::rope_offset_to_point(&self.text, range.end);
+
+        self.text.remove(range);
+
+        let new_end_byte = start_byte;
+        let new_end_position = start_position;
+
+        if let Some(tree) = &mut self.tree {
+            tree.edit(&InputEdit {
+                start_byte,
+                old_end_byte,
+                new_end_byte,
+                start_position,
+                old_end_position,
+                new_end_position,
+            });
+        }
+
+        self.tree = parse_rope(&mut self.parser, self.tree.as_ref(), &self.text)
+    }
+
+    pub fn insert_text(&mut self, offset: usize, chunk: &str, cx: &mut Context<Self>) {
+        self.history.current_edit.push(BufferEdit {
+            offset: offset,
+            text: chunk.to_string(),
+            kind: EditKind::Insert,
+        });
+
+        if !self.history.redo_stack.is_empty() {
+            self.history.redo_stack.clear();
+        }
+
+        self.insert_internal(offset, chunk);
+        cx.notify();
+    }
+
+    pub fn delete_text(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        if range.end > self.text.len_chars() || range.start >= range.end {
+            return;
+        }
+
+        let deleted_text = self.text.slice(range.clone()).to_string();
+        self.history.current_edit.push(BufferEdit {
+            offset: range.start,
+            text: deleted_text,
+            kind: EditKind::Delete,
+        });
+        self.history.redo_stack.clear();
+
+        self.delete_internal(range);
+        cx.notify();
+    }
+
+    pub fn undo(&mut self, cx: &mut Context<Self>) -> Option<usize> {
+        let edits = self.history.undo_stack.pop()?;
+        let mut final_offset = None;
+
+        for e in edits.iter().rev() {
+            match e.kind {
+                EditKind::Insert => {
+                    self.delete_internal(e.offset..e.offset + e.text.chars().count());
+                    final_offset = Some(e.offset)
+                }
+                EditKind::Delete => {
+                    self.insert_internal(e.offset, &e.text);
+                    final_offset = Some(e.offset)
+                }
+            }
+        }
+
+        self.history.redo_stack.push(edits);
+        cx.notify();
+        final_offset
+    }
+
+    pub fn redo(&mut self, cx: &mut Context<Self>) -> Option<usize> {
+        let edits = self.history.redo_stack.pop()?;
+        let mut final_offset = None;
+
+        for e in edits.iter() {
+            match e.kind {
+                EditKind::Delete => {
+                    self.delete_internal(e.offset..e.offset + e.text.chars().count());
+                    final_offset = Some(e.offset + e.text.chars().count());
+                }
+                EditKind::Insert => {
+                    self.insert_internal(e.offset, &e.text);
+                    final_offset = Some(e.offset + e.text.chars().count());
+                }
+            }
+        }
+        self.history.undo_stack.push(edits);
+        cx.notify();
+        final_offset
+    }
+
+    fn end_edit_group(&mut self) {
+        if !self.history.current_edit.is_empty() {
+            self.history
+                .undo_stack
+                .push(self.history.current_edit.clone());
+            self.history.current_edit.clear();
+        }
+    }
+
+    fn rope_offset_to_point(rope: &Rope, char_offset: usize) -> tree_sitter::Point {
+        let line = rope.char_to_line(char_offset);
+        let line_start_char = rope.line_to_char(line);
+        let col = char_offset - line_start_char;
+
+        let byte_col = rope.char_to_byte(char_offset) - rope.char_to_byte(col);
+
+        tree_sitter::Point::new(line, byte_col)
+    }
+}
+
+struct VimEditor {
+    buffer: Entity<Buffer>,
+    _buffer_subscription: Subscription,
+
     cursor_offset: usize,
-    vim_state: VimState,
+    folded_ranges: Vec<Range<usize>>,
+    line_map: Vec<usize>,
 
     cursor_visible: bool,
     is_insert_mode: bool,
@@ -66,28 +254,19 @@ struct VimEditor {
 
     scroll_handle: UniformListScrollHandle,
     focus_handle: FocusHandle,
-
-    history: History,
-    key_manager: KeyManager<TerminalKey, Action<EmptyInfo>, RepeatType>,
-
-    parser: Parser,
-    tree: Option<tree_sitter::Tree>,
 }
 
 impl VimEditor {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        let text = Rope::new();
-
-        let text_clone = text.clone();
-
-        let list_state = ListState::new(text_clone.len_lines(), ListAlignment::Top, px(200.0));
+    pub fn new(cx: &mut Context<Self>, buffer: Entity<Buffer>) -> Self {
+        let _buffer_subscription = cx.observe(&buffer, |_, _, cx| {
+            cx.notify();
+        });
 
         let vim_binding = default_vim_keys::<EmptyInfo>();
-        let key_manager = KeyManager::new(vim_binding);
-
-        let vim_state = VimState::default();
 
         let vim_machine = default_vim_keys();
+        let folded_ranges = Vec::new();
+        let line_map = Vec::new();
 
         let _blink_task = cx.spawn(async move |this, cx| {
             let blink_interval = std::time::Duration::from_millis(500);
@@ -134,63 +313,68 @@ impl VimEditor {
             }
         });
 
-        let org_language = unsafe { Language::from_raw(tree_sitter_org() as *const _) };
-        let mut parser = Parser::new();
-        parser
-            .set_language(&org_language)
-            .expect("Failed to load org langauge");
-
-        let tree = parse_rope(&mut parser, None, &text);
-
         let scroll_handle = UniformListScrollHandle::new();
-        let history = History::new();
 
         Self {
-            text,
+            buffer,
+            _buffer_subscription,
             cursor_offset: 0,
             target_col: 0,
             scroll_handle,
             focus_handle: cx.focus_handle(),
-            vim_state,
-            history,
             vim_machine,
-            parser,
-            tree,
             last_activity: Instant::now(),
             cursor_visible: true,
             is_insert_mode: false,
             _blink_task,
-            key_manager,
+            line_map,
+            folded_ranges,
+        }
+    }
+
+    fn rebuild_line_map(&mut self, cx: &mut Context<Self>) {
+        self.line_map.clear();
+        let buffer = self.buffer.read(cx);
+        let total_lines = buffer.text.len_lines();
+        let mut current_line = 0;
+
+        while current_line < total_lines {
+            for fold in &self.folded_ranges {
+                if fold.contains(&current_line) {
+                    current_line = fold.end;
+                    break;
+                }
+
+                self.line_map.push(current_line);
+                current_line += 1;
+            }
         }
     }
 
     fn handle_key_down(
         &mut self,
         event: &KeyDownEvent,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.cursor_visible = true;
 
-        let old_line_idx = self.text.char_to_line(self.cursor_offset);
+        let old_line_idx = self.buffer.read(cx).text.char_to_line(self.cursor_offset);
 
         let terminal_key = Self::translate_key(event);
         self.vim_machine.input_key(terminal_key);
 
         while let Some((action, context)) = self.vim_machine.pop() {
-            self.execute_action(action, context);
+            self.execute_action(action, context, cx);
         }
 
-        if self.vim_machine.mode() == VimMode::Normal && !self.history.current_edit.is_empty() {
-            self.history
-                .undo_stack
-                .push(self.history.current_edit.clone());
-            self.history.current_edit = Vec::new();
+        if self.vim_machine.mode() == VimMode::Normal {
+            self.buffer.update(cx, |buf, _| buf.end_edit_group());
         }
 
         self.is_insert_mode = self.vim_machine.mode() == VimMode::Insert;
 
-        let new_line_idx = self.text.char_to_line(self.cursor_offset);
+        let new_line_idx = self.buffer.read(cx).text.char_to_line(self.cursor_offset);
         let strategy = if new_line_idx < old_line_idx {
             ScrollStrategy::Top
         } else {
@@ -203,7 +387,13 @@ impl VimEditor {
         cx.notify();
     }
 
-    fn execute_action(&mut self, action: Action<EmptyInfo>, ctx: EditContext) {
+    fn execute_action(
+        &mut self,
+        action: Action<EmptyInfo>,
+        ctx: EditContext,
+        cx: &mut Context<Self>,
+    ) {
+        let text = self.buffer.read(cx).text.clone();
         match action {
             // 1. Text Insertion (Typing in Insert mode)
             // Modalkit emits characters or strings directly as EditorActions.
@@ -212,48 +402,33 @@ impl VimEditor {
                     match c {
                         // 1. Standard character typing
                         Char::Single(ch) => {
-                            self.history.current_edit.push(BufferEdit {
-                                offset: self.cursor_offset,
-                                text: ch.to_string(),
-                                kind: EditKind::Insert,
+                            self.buffer.update(cx, |buf, cx| {
+                                buf.insert_text(self.cursor_offset, &ch.to_string(), cx);
                             });
 
-                            if !self.history.redo_stack.is_empty() {
-                                self.history.redo_stack.clear();
-                            }
+                            let text = self.buffer.read(cx).text.clone();
 
-                            self.insert_char(ch);
-
-                            let current_line_idx = self.text.char_to_line(self.cursor_offset);
-                            let current_line_start = self.text.line_to_char(current_line_idx);
+                            self.cursor_offset += 1;
+                            let current_line_idx = text.char_to_line(self.cursor_offset);
+                            let current_line_start = text.line_to_char(current_line_idx);
                             self.target_col = self.cursor_offset - current_line_start;
                         }
 
                         // 2. Vim Digraphs (e.g., typing two chars to make a special symbol)
                         Char::Digraph(c1, c2) => {
                             // For now, just push both. Later you'd look them up in a Digraph table.
-                            self.history.current_edit.push(BufferEdit {
-                                offset: self.cursor_offset,
-                                text: c1.to_string(),
-                                kind: EditKind::Insert,
+
+                            let concat: String = [c1, c2].iter().collect();
+
+                            self.buffer.update(cx, |buf, cx| {
+                                buf.insert_text(self.cursor_offset, &concat, cx);
                             });
 
-                            if !self.history.redo_stack.is_empty() {
-                                self.history.redo_stack.clear();
-                            }
+                            let text = self.buffer.read(cx).text.clone();
 
-                            self.insert_char(c1);
-
-                            self.history.current_edit.push(BufferEdit {
-                                offset: self.cursor_offset,
-                                text: c2.to_string(),
-                                kind: EditKind::Insert,
-                            });
-
-                            self.insert_char(c2);
-
-                            let current_line_idx = self.text.char_to_line(self.cursor_offset);
-                            let current_line_start = self.text.line_to_char(current_line_idx);
+                            self.cursor_offset += 2;
+                            let current_line_idx = text.char_to_line(self.cursor_offset);
+                            let current_line_start = text.line_to_char(current_line_idx);
                             self.target_col = self.cursor_offset - current_line_start;
                         }
 
@@ -276,9 +451,44 @@ impl VimEditor {
                 }
 
                 InsertTextAction::Transcribe(text, _dir, _count) => {
-                    self.text.insert(self.cursor_offset, &text);
-                    self.cursor_offset += text.chars().count();
+                    println!("Transcribe Type action not implemented");
                 }
+
+                InsertTextAction::Paste(style, count) => {
+                    if let Some(clipboard_item) = cx.read_from_clipboard() {
+                        let text_to_insert = clipboard_item.text().unwrap_or_default();
+
+                        if text_to_insert.is_empty() {
+                            return;
+                        }
+
+                        let multiplier = match count {
+                            Count::Exact(n) => n,
+                            Count::Contextual => ctx.get_count().unwrap_or(1),
+                            _ => 1,
+                        };
+
+                        let full_text = text_to_insert.repeat(multiplier);
+
+                        let offset = match style {
+                            PasteStyle::Side(dir) => match dir {
+                                MoveDir1D::Previous => self.cursor_offset,
+                                MoveDir1D::Next => (self.cursor_offset + 1)
+                                    .min(self.buffer.read(cx).text.len_chars()),
+                            },
+                            _ => {
+                                println!("Paste style not yet implmeented: {:?}", style);
+                                return;
+                            }
+                        };
+
+                        self.buffer
+                            .update(cx, |buf, cx| buf.insert_text(offset, &full_text, cx));
+
+                        self.cursor_offset = offset + full_text.chars().count() + 1;
+                    }
+                }
+
                 _ => {
                     println!("Unhandled InsertTextAction: {:?}", insert_action);
                 }
@@ -302,9 +512,9 @@ impl VimEditor {
 
                         match move_type {
                             MoveType::Column(dir, _) => {
-                                let current_line_idx = self.text.char_to_line(self.cursor_offset);
-                                let line_start = self.text.line_to_char(current_line_idx);
-                                let line = self.text.line(current_line_idx);
+                                let current_line_idx = text.char_to_line(self.cursor_offset);
+                                let line_start = text.line_to_char(current_line_idx);
+                                let line = text.line(current_line_idx);
 
                                 let mut line_len = line.len_chars();
 
@@ -312,7 +522,7 @@ impl VimEditor {
                                     line_len = line_len.saturating_sub(1);
                                 }
 
-                                let line_end = current_line_idx + line_len;
+                                let line_end = line_start + line_len;
 
                                 match dir {
                                     MoveDir1D::Previous => {
@@ -330,20 +540,20 @@ impl VimEditor {
                                 self.target_col = self.cursor_offset - line_start;
                             }
                             MoveType::Line(MoveDir1D::Next) => {
-                                self.move_cursor_vertical(multiplier as isize);
+                                self.move_cursor_vertical(multiplier as isize, cx);
                             }
                             MoveType::Line(MoveDir1D::Previous) => {
-                                self.move_cursor_vertical((multiplier as isize) * -1);
+                                self.move_cursor_vertical((multiplier as isize) * -1, cx);
                             }
                             MoveType::LinePos(MovePosition::Beginning) => {
-                                let line_idx = self.text.char_to_line(self.cursor_offset);
-                                self.cursor_offset = self.text.line_to_char(line_idx);
+                                let line_idx = text.char_to_line(self.cursor_offset);
+                                self.cursor_offset = text.line_to_char(line_idx);
                                 self.target_col = 0;
                             }
                             MoveType::LinePos(MovePosition::End) => {
-                                let line_idx = self.text.char_to_line(self.cursor_offset);
-                                let line_start = self.text.line_to_char(line_idx);
-                                let line = self.text.line(line_idx);
+                                let line_idx = text.char_to_line(self.cursor_offset);
+                                let line_start = text.line_to_char(line_idx);
+                                let line = text.line(line_idx);
 
                                 let mut char_count = line.len_chars();
 
@@ -359,9 +569,9 @@ impl VimEditor {
                             }
 
                             MoveType::FinalNonBlank(_) => {
-                                let line_idx = self.text.char_to_line(self.cursor_offset);
-                                let line_start = self.text.line_to_char(line_idx);
-                                let line = self.text.line(line_idx);
+                                let line_idx = text.char_to_line(self.cursor_offset);
+                                let line_start = text.line_to_char(line_idx);
+                                let line = text.line(line_idx);
 
                                 let mut non_blank_offset = 0;
 
@@ -382,14 +592,14 @@ impl VimEditor {
                                 dbg!(count);
                                 dbg!(multiplier);
 
-                                let current_line_idx = self.text.char_to_line(self.cursor_offset);
+                                let current_line_idx = text.char_to_line(self.cursor_offset);
 
-                                let last_line = self.text.len_lines().saturating_sub(1);
+                                let last_line = text.len_lines().saturating_sub(1);
                                 let target_line_idx =
                                     (current_line_idx + multiplier).min(last_line);
 
-                                let line_start = self.text.line_to_char(target_line_idx);
-                                let line = self.text.line(target_line_idx);
+                                let line_start = text.line_to_char(target_line_idx);
+                                let line = text.line(target_line_idx);
 
                                 let mut non_blank_offset = 0;
 
@@ -419,15 +629,9 @@ impl VimEditor {
 
                             if start < self.cursor_offset {
                                 let range = start..self.cursor_offset;
-                                let deleted_text = self.text.slice(range.clone()).to_string();
 
-                                self.history.current_edit.push(BufferEdit {
-                                    offset: start,
-                                    text: deleted_text,
-                                    kind: EditKind::Delete,
-                                });
+                                self.buffer.update(cx, |buf, cx| buf.delete_text(range, cx));
 
-                                self.text.remove(range);
                                 self.cursor_offset = start;
                             }
                         }
@@ -437,11 +641,60 @@ impl VimEditor {
                                 _ => 1,
                             };
 
-                            let end = (self.cursor_offset + multiplier).min(self.text.len_chars());
+                            let max_len = self.buffer.read(cx).text.chars().count();
+                            let end = (self.cursor_offset + multiplier).min(max_len);
 
-                            self.text.remove(self.cursor_offset..end);
+                            let range = self.cursor_offset..end;
+                            self.buffer.update(cx, |buf, cx| buf.delete_text(range, cx));
                         }
                         _ => println!("Unknown Delete target: {:?}", target),
+                    },
+                    (Specifier::Exact(EditAction::Yank), target) => match target {
+                        EditTarget::Motion(dir, count) => {
+                            let multiplier = match count {
+                                Count::Exact(n) => n,
+                                Count::Contextual => ctx.get_count().unwrap_or(1),
+                                _ => 1,
+                            };
+
+                            let offset = match dir {
+                                MoveType::Column(MoveDir1D::Previous, _) => {
+                                    self.cursor_offset.saturating_sub(multiplier)
+                                }
+                                MoveType::Column(MoveDir1D::Next, _) => (self.cursor_offset
+                                    + multiplier)
+                                    .min(self.buffer.read(cx).text.chars().count()),
+                                MoveType::LinePos(MovePosition::End) => {
+                                    let text = self.buffer.read(cx).text.clone();
+
+                                    let line_idx = text.char_to_line(self.cursor_offset);
+                                    let line_start = text.line_to_char(line_idx);
+                                    let line = text.line(line_idx);
+                                    let mut char_count = line.len_chars();
+
+                                    if char_count > 0 && line.char(char_count - 1) == '\n' {
+                                        char_count -= 1;
+                                    }
+
+                                    line_start + char_count
+                                }
+                                _ => {
+                                    println!("Unhandled yank motion: {:?}", dir);
+                                    return;
+                                }
+                            };
+
+                            let start = self.cursor_offset.min(offset);
+                            let end = self.cursor_offset.max(offset);
+
+                            if start < end {
+                                let yanked_text =
+                                    self.buffer.read(cx).text.slice(start..end).to_string();
+
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(yanked_text));
+                            }
+                        }
+                        _ => println!("Unhandled Tartget for yanking: {:?}", target),
                     },
                     _ => {
                         println!("Unhandled  EditAction {:?} on {:?}", specifier, target);
@@ -456,23 +709,11 @@ impl VimEditor {
                 };
 
                 for _ in 0..multiplier {
-                    if let Some(edits) = self.history.undo_stack.pop() {
-                        for e in edits.iter().rev() {
-                            match e.kind {
-                                EditKind::Insert => {
-                                    self.text
-                                        .remove(e.offset..e.offset + e.text.chars().count());
-                                    self.cursor_offset = e.offset;
-                                }
-                                EditKind::Delete => {
-                                    self.text.insert(e.offset, &e.text);
-                                    self.cursor_offset = e.offset;
-                                }
-                            }
+                    self.buffer.update(cx, |buf, cx| {
+                        if let Some(offset) = buf.undo(cx) {
+                            self.cursor_offset = offset;
                         }
-
-                        self.history.redo_stack.push(edits);
-                    }
+                    });
                 }
             }
             Action::Editor(EditorAction::History(HistoryAction::Redo(count))) => {
@@ -483,23 +724,11 @@ impl VimEditor {
                 };
 
                 for _ in 0..multiplier {
-                    if let Some(edits) = self.history.redo_stack.pop() {
-                        for e in edits.iter() {
-                            match e.kind {
-                                EditKind::Delete => {
-                                    self.text
-                                        .remove(e.offset..e.offset + e.text.chars().count());
-                                    self.cursor_offset = e.offset + e.text.chars().count();
-                                }
-                                EditKind::Insert => {
-                                    self.text.insert(e.offset, &e.text);
-                                    self.cursor_offset = e.offset + e.text.chars().count();
-                                }
-                            }
+                    self.buffer.update(cx, |buf, cx| {
+                        if let Some(offset) = buf.redo(cx) {
+                            self.cursor_offset = offset;
                         }
-
-                        self.history.undo_stack.push(edits);
-                    }
+                    });
                 }
             }
 
@@ -543,18 +772,17 @@ impl VimEditor {
         TerminalKey::from(key_event)
     }
 
-    fn move_cursor_vertical(&mut self, lines_to_move: isize) {
-        let current_line_idx = self.text.char_to_line(self.cursor_offset);
+    fn move_cursor_vertical(&mut self, lines_to_move: isize, cx: &mut Context<Self>) {
+        let text = self.buffer.read(cx).text.clone();
+        let current_line_idx = text.char_to_line(self.cursor_offset);
 
         let new_line_idx = (current_line_idx as isize + lines_to_move)
             .max(0)
-            .min(self.text.len_lines().saturating_sub(1) as isize)
-            as usize;
+            .min(text.len_lines().saturating_sub(1) as isize) as usize;
 
-        let new_line_start = self.text.line_to_char(new_line_idx);
+        let new_line_start = text.line_to_char(new_line_idx);
 
-        let new_line_len = self
-            .text
+        let new_line_len = text
             .line(new_line_idx)
             .chars()
             .filter(|&c| c != '\n')
@@ -564,136 +792,215 @@ impl VimEditor {
 
         self.cursor_offset = new_line_start + new_col;
     }
+}
 
-    fn insert_char(&mut self, ch: char) {
-        let start_byte = self.text.char_to_byte(self.cursor_offset);
-        let start_position = Self::rope_offset_to_point(&self.text, self.cursor_offset);
+#[derive(std::default::Default, PartialEq)]
+struct TextStyle {
+    color: Option<gpui::Rgba>,
+}
 
-        self.text.insert_char(self.cursor_offset, ch);
-        self.cursor_offset += 1;
-
-        let old_end_byte = start_byte; // Same as we insert and don't delete
-        let old_end_position = start_position;
-
-        let new_end_byte = self.text.char_to_byte(self.cursor_offset);
-        let new_end_position = Self::rope_offset_to_point(&self.text, self.cursor_offset);
-
-        if let Some(tree) = &mut self.tree {
-            tree.edit(&InputEdit {
-                start_byte,
-                old_end_byte,
-                new_end_byte,
-                start_position,
-                old_end_position,
-                new_end_position: new_end_position,
-            });
-        }
-
-        self.tree = parse_rope(&mut self.parser, self.tree.as_ref(), &self.text);
-    }
-
-    fn rope_offset_to_point(rope: &Rope, char_offset: usize) -> tree_sitter::Point {
-        let line = rope.char_to_line(char_offset);
-        let line_start_char = rope.line_to_char(line);
-        let col = char_offset - line_start_char;
-
-        let byte_col = rope.char_to_byte(char_offset) - rope.char_to_byte(col);
-
-        tree_sitter::Point::new(line, byte_col)
-    }
+struct StyleSpan {
+    start_byte: usize,
+    end_byte: usize,
+    style: TextStyle,
 }
 
 impl Render for VimEditor {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let cursor_line_idx = self.text.char_to_line(self.cursor_offset);
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let buffer = self.buffer.read(cx);
+        let text = buffer.text.clone();
+        let cursor_line_idx = text.char_to_line(self.cursor_offset);
 
-        let text = self.text.clone();
         let cursor_offset = self.cursor_offset.clone();
         let cursor_visible = self.cursor_visible.clone();
         let is_insert_mode = self.is_insert_mode.clone();
+
+        let query = buffer.query.clone();
+        let tree = buffer.tree.clone();
 
         let editor_list = uniform_list(
             "editor_list",
             text.len_lines(),
             move |visible_range, _window, _app| {
-                visible_range
-                    .map(|line_idx| {
-                        let line_slice = text.line(line_idx);
+                let visible_start_line = visible_range.start;
+                let visible_end_line = visible_range.end;
 
-                        let mut line_str = line_slice.to_string();
+                let start_byte = text.line_to_byte(visible_start_line);
+                let end_byte = if visible_end_line < text.len_lines() {
+                    text.line_to_byte(visible_end_line)
+                } else {
+                    text.len_bytes()
+                };
 
-                        if line_str.ends_with('\n') {
-                            line_str.pop();
+                let mut stye_spans: Vec<StyleSpan> = Vec::new();
+
+                let star_count = query.capture_index_for_name("heading.stars").unwrap();
+
+                if let Some(tree) = &tree {
+                    let mut cursor = tree_sitter::QueryCursor::new();
+                    cursor.set_byte_range(start_byte..end_byte);
+
+                    let matches = cursor.matches(&query, tree.root_node(), "".as_bytes());
+
+                    matches.for_each(|m| {
+                        let mut heading_level = 0;
+
+                        for cap in m.captures {
+                            let capture_name = query.capture_names()[cap.index as usize];
+                            if capture_name == "heading.stars" {
+                                heading_level = cap.node.end_byte() - cap.node.start_byte();
+                            }
                         }
 
-                        if line_idx == cursor_line_idx {
-                            let line_start_char = text.line_to_char(line_idx);
-                            let cursor_col = cursor_offset - line_start_char;
+                        for cap in m.captures {
+                            let capture_name = query.capture_names()[cap.index as usize];
 
-                            let chars: Vec<char> = line_str.chars().collect();
-                            let safe_col = cursor_col.min(chars.len());
+                            let mut style = TextStyle::default();
+                            match capture_name {
+                                "heading" => {
+                                    style.color = match heading_level {
+                                        1 => Some(rgba(0x00cef7ff)),
+                                        2 => Some(rgba(0x0052f7ff)),
+                                        3 => Some(rgba(0x00f7a4ff)),
+                                        _ => Some(rgba(0x0000eeff)),
+                                    }
+                                }
+                                _ => continue,
+                            }
 
-                            let befor_cursor: String = chars[..safe_col].iter().collect();
+                            stye_spans.push(StyleSpan {
+                                start_byte: cap.node.start_byte(),
+                                end_byte: cap.node.end_byte(),
+                                style,
+                            });
+                        }
+                    });
+                }
 
-                            let cursor_char = if cursor_col < chars.len() {
-                                chars[safe_col].to_string()
-                            } else {
-                                " ".to_string()
+                visible_range
+                    .map(|line_idx| {
+                        let line = text.line(line_idx);
+                        let line_start_char = text.line_to_char(line_idx);
+                        let line_start_byte = text.line_to_byte(line_idx);
+                        let line_end_byte = line_start_byte + line.len_bytes();
+
+                        let line_spans: Vec<&StyleSpan> = stye_spans
+                            .iter()
+                            .filter(|s| {
+                                s.start_byte < line_end_byte && line_start_byte < s.end_byte
+                            })
+                            .collect();
+
+                        let mut elements = Vec::new();
+                        let mut current_chunk = String::new();
+                        let mut current_style = TextStyle::default();
+
+                        let mut current_byte = line_start_byte;
+                        let mut current_char_idx = line_start_char;
+
+                        let mut flush_chunk =
+                            |chunk: &mut String,
+                             style: TextStyle,
+                             elements: &mut Vec<AnyElement>| {
+                                if !chunk.is_empty() {
+                                    let mut element = div().child(chunk.clone());
+                                    if let Some(c) = style.color {
+                                        element = element.text_color(c)
+                                    }
+
+                                    elements.push(element.into_any_element());
+                                    chunk.clear();
+                                }
                             };
 
-                            let after_cursor: String = if safe_col + 1 < chars.len() {
-                                chars[safe_col + 1..].iter().collect()
-                            } else {
-                                String::new()
+                        for ch in line.chars() {
+                            if ch == '\n' {
+                                break;
                             };
 
-                            if is_insert_mode {
+                            let is_cursor =
+                                line_idx == cursor_line_idx && current_char_idx == cursor_offset;
+
+                            let mut char_style = TextStyle::default();
+                            for span in &line_spans {
+                                if current_byte >= span.start_byte && current_byte < span.end_byte {
+                                    if let Some(c) = span.style.color {
+                                        char_style.color = Some(c)
+                                    }
+                                }
+                            }
+
+                            if char_style != current_style || is_cursor {
+                                flush_chunk(&mut current_chunk, current_style, &mut elements);
+                                current_style = char_style;
+                            }
+
+                            if is_cursor {
+                                let cursor_el = if is_insert_mode {
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .child(div().w(px(2.0)).bg(if cursor_visible {
+                                            rgba(0xccccccff)
+                                        } else {
+                                            rgba(0x00000000)
+                                        }))
+                                        .child(ch.to_string())
+                                } else {
+                                    div()
+                                        .bg(if cursor_visible {
+                                            rgba(0xccccccff)
+                                        } else {
+                                            rgba(0x00000000)
+                                        })
+                                        .text_color(rgb(0xe1e1e1))
+                                        .child(ch.to_string())
+                                };
+                                elements.push(cursor_el.into_any_element());
+                            } else {
+                                current_chunk.push(ch);
+                            }
+
+                            current_byte += ch.len_utf8();
+                            current_char_idx += 1;
+                        }
+                        flush_chunk(&mut current_chunk, current_style, &mut elements);
+
+                        if line_idx == cursor_line_idx && current_char_idx == cursor_offset {
+                            let eol_cursor = if is_insert_mode {
                                 div()
                                     .flex()
                                     .flex_row()
-                                    .text_color(rgb(0xfefefe))
-                                    .font_family("Liga SFMonoNerdFont")
-                                    .child(befor_cursor)
                                     .child(div().w(px(2.0)).bg(if cursor_visible {
                                         rgba(0xccccccff)
                                     } else {
                                         rgba(0x00000000)
                                     }))
-                                    .child(cursor_char)
-                                    .child(after_cursor)
+                                    .child(" ".to_string())
                             } else {
                                 div()
-                                    .flex()
-                                    .flex_row()
-                                    .text_color(rgb(0xfefefe))
-                                    .font_family("Liga SFMonoNerdFont")
-                                    .child(befor_cursor)
-                                    .child(
-                                        div()
-                                            .bg(if cursor_visible {
-                                                rgba(0xccccccff)
-                                            } else {
-                                                rgba(0x00000000)
-                                            })
-                                            .text_color(rgb(0x1e1e1e))
-                                            .child(cursor_char),
-                                    )
-                                    .child(after_cursor)
-                            }
-                        } else {
-                            let display_str = if line_str.is_empty() {
-                                " ".to_string()
-                            } else {
-                                line_str
+                                    .bg(if cursor_visible {
+                                        rgba(0xccccccff)
+                                    } else {
+                                        rgba(0x00000000)
+                                    })
+                                    .text_color(rgb(0xe1e1e1))
+                                    .child(" ".to_string())
                             };
 
-                            div()
-                                .flex()
-                                .flex_row()
-                                .text_color(rgb(0xfefefe))
-                                .font_family("Liga SFMonoNerdFont")
-                                .child(display_str)
+                            elements.push(eol_cursor.into_any_element());
                         }
+
+                        div()
+                            .flex()
+                            .flex_row()
+                            .text_color(rgb(0xfefefe))
+                            .font_family("Liga SFMonoNerdFont")
+                            .children(if elements.is_empty() {
+                                vec![div().child(" ").into_any_element()]
+                            } else {
+                                elements
+                            })
                     })
                     .collect()
             },
@@ -766,12 +1073,16 @@ fn main() {
             ..Default::default()
         };
 
+        let buffer = cx.new(|cx| Buffer::new(cx));
+
         let window = cx
-            .open_window(options, |window, cx| cx.new(|cx| VimEditor::new(cx)))
+            .open_window(options, |_window, cx| {
+                cx.new(|cx| VimEditor::new(cx, buffer.clone()))
+            })
             .expect("Failed to open window");
 
         window
-            .update(cx, |view, window, cx| {
+            .update(cx, |view, window, _cx| {
                 view.focus_handle.focus(window);
             })
             .unwrap();
