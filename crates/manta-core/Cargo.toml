@@ -1,0 +1,11 @@
+[package]
+name = "manta-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ropey.workspace = true
+tree-sitter.workspace = true
+
+[build-dependencies]
+cc.workspace = true

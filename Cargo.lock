@@ -3,6 +3,15 @@
 version = 4
 
 [[package]]
+name = "Manta"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "manta-core",
+ "manta-gui",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3183,16 +3192,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "manta2"
+name = "manta-core"
 version = "0.1.0"
 dependencies = [
  "cc",
- "gpui",
- "modalkit",
- "nucleo",
  "ropey",
  "tree-sitter",
- "walkdir",
+]
+
+[[package]]
+name = "manta-gui"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "manta-core",
+ "modalkit",
+]
+
+[[package]]
+name = "manta_components"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "nucleo",
 ]
 
 [[package]]

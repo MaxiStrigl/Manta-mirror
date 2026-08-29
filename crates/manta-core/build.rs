@@ -8,5 +8,6 @@ fn main() {
         .include(src_dir.join("tree_sitter"))
         .file(src_dir.join("parser.c"))
         .file(src_dir.join("scanner.c"))
+        .flag("--no-warnings")
         .compile("tree-sitter-org");
 }

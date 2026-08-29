@@ -1,0 +1,9 @@
+[package]
+name = "manta-gui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+modalkit.workspace = true
+gpui.workspace = true
+manta-core.workspace = true

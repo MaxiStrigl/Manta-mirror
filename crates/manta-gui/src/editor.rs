@@ -1,8 +1,8 @@
 use std::ops::Range;
-use std::sync::Arc;
 use std::time::Instant;
 
 use gpui::*;
+use manta_core::buffer::Buffer;
 use modalkit::actions::{Action, EditAction, EditorAction, HistoryAction, InsertTextAction};
 use modalkit::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use modalkit::editing::context::EditContext;
@@ -14,289 +14,11 @@ use modalkit::prelude::*;
 use modalkit::{
     editing::application::EmptyInfo, env::vim::keybindings::default_vim_keys, key::TerminalKey,
 };
-use ropey::Rope;
-use tree_sitter::{InputEdit, Language, Parser, Query, StreamingIterator};
-
-use crate::workspace::EditorEvent;
-
-unsafe extern "C" {
-    fn tree_sitter_org() -> *const std::ffi::c_void;
-}
-
-#[derive(Clone, Debug)]
-pub enum EditKind {
-    Insert,
-    Delete,
-}
-
-#[derive(Clone, Debug)]
-pub struct BufferEdit {
-    offset: usize,
-    text: String,
-    kind: EditKind,
-}
-
-#[derive(Clone, Debug)]
-struct History {
-    undo_stack: Vec<Vec<BufferEdit>>,
-    redo_stack: Vec<Vec<BufferEdit>>,
-    current_edit: Vec<BufferEdit>,
-}
-
-impl History {
-    pub fn new() -> Self {
-        Self {
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
-            current_edit: Vec::new(),
-        }
-    }
-}
 
 enum BufferEvent {
     LinesInserted { row: usize, line_delta: usize },
     LinesDeleted { row: usize, line_delta: usize },
 }
-
-pub struct Buffer {
-    text: Rope,
-    history: History,
-    query: Arc<Query>,
-
-    parser: Parser,
-    tree: Option<tree_sitter::Tree>,
-}
-
-impl Buffer {
-    pub fn new() -> Buffer {
-        let text = Rope::new();
-        let history = History::new();
-
-        let org_language = unsafe { Language::from_raw(tree_sitter_org() as *const _) };
-        let mut parser = Parser::new();
-        parser
-            .set_language(&org_language)
-            .expect("Failed to load org langauge");
-
-        let tree = parse_rope(&mut parser, None, &text);
-
-        let query_src = r#"
-            (headline 
-             stars: (stars) @heading.stars
-             ) @heading"#;
-
-        let query =
-            Arc::new(Query::new(&org_language, query_src).expect("Failed to setup org query"));
-
-        Self {
-            text,
-            history,
-            query,
-            parser,
-            tree,
-        }
-    }
-
-    pub fn from_file(path: impl AsRef<std::path::Path>) -> Result<Buffer> {
-        let file = std::fs::File::open(path)?;
-        let text = Rope::from_reader(file)?;
-        let history = History::new();
-
-        let org_language = unsafe { Language::from_raw(tree_sitter_org() as *const _) };
-        let mut parser = Parser::new();
-        parser
-            .set_language(&org_language)
-            .expect("Failed to load org langauge");
-
-        let tree = parse_rope(&mut parser, None, &text);
-
-        let query_src = r#"
-            (headline 
-             stars: (stars) @heading.stars
-             ) @heading"#;
-
-        let query =
-            Arc::new(Query::new(&org_language, query_src).expect("Failed to setup org query"));
-
-        Ok(Self {
-            text,
-            history,
-            query,
-            parser,
-            tree,
-        })
-    }
-
-    fn insert_internal(&mut self, offset: usize, chunk: &str, cx: &mut Context<Self>) {
-        let start_byte = self.text.char_to_byte(offset);
-        let start_position = Self::rope_offset_to_point(&self.text, offset);
-
-        let row = start_position.row;
-        let new_lines = chunk.chars().filter(|&c| c == '\n').count();
-
-        self.text.insert(offset, chunk);
-
-        let new_end_byte = self.text.char_to_byte(offset + chunk.chars().count());
-        let new_end_position =
-            Self::rope_offset_to_point(&self.text, offset + chunk.chars().count());
-
-        if let Some(tree) = &mut self.tree {
-            tree.edit(&InputEdit {
-                start_byte,
-                old_end_byte: start_byte,
-                new_end_byte,
-                start_position,
-                old_end_position: start_position,
-                new_end_position,
-            });
-        }
-
-        self.tree = parse_rope(&mut self.parser, self.tree.as_ref(), &self.text);
-
-        if new_lines > 0 {
-            cx.emit(BufferEvent::LinesInserted {
-                row,
-                line_delta: new_lines,
-            });
-        }
-    }
-
-    pub fn delete_internal(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
-        let start_byte = self.text.char_to_byte(range.start);
-        let start_position = Self::rope_offset_to_point(&self.text, range.start);
-        let old_end_byte = self.text.char_to_byte(range.end);
-        let old_end_position = Self::rope_offset_to_point(&self.text, range.end);
-
-        let row = start_position.row;
-
-        let deleted_lines = self
-            .text
-            .slice(range.clone())
-            .chars()
-            .filter(|&c| c == '\n')
-            .count();
-
-        self.text.remove(range);
-
-        let new_end_byte = start_byte;
-        let new_end_position = start_position;
-
-        if let Some(tree) = &mut self.tree {
-            tree.edit(&InputEdit {
-                start_byte,
-                old_end_byte,
-                new_end_byte,
-                start_position,
-                old_end_position,
-                new_end_position,
-            });
-        }
-
-        self.tree = parse_rope(&mut self.parser, self.tree.as_ref(), &self.text);
-
-        if deleted_lines > 0 {
-            cx.emit(BufferEvent::LinesDeleted {
-                row,
-                line_delta: deleted_lines,
-            });
-        }
-    }
-
-    pub fn insert_text(&mut self, offset: usize, chunk: &str, cx: &mut Context<Self>) {
-        self.history.current_edit.push(BufferEdit {
-            offset: offset,
-            text: chunk.to_string(),
-            kind: EditKind::Insert,
-        });
-
-        if !self.history.redo_stack.is_empty() {
-            self.history.redo_stack.clear();
-        }
-
-        self.insert_internal(offset, chunk, cx);
-        cx.notify();
-    }
-
-    pub fn delete_text(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
-        if range.end > self.text.len_chars() || range.start >= range.end {
-            return;
-        }
-
-        let deleted_text = self.text.slice(range.clone()).to_string();
-        self.history.current_edit.push(BufferEdit {
-            offset: range.start,
-            text: deleted_text,
-            kind: EditKind::Delete,
-        });
-        self.history.redo_stack.clear();
-
-        self.delete_internal(range, cx);
-        cx.notify();
-    }
-
-    pub fn undo(&mut self, cx: &mut Context<Self>) -> Option<usize> {
-        let edits = self.history.undo_stack.pop()?;
-        let mut final_offset = None;
-
-        for e in edits.iter().rev() {
-            match e.kind {
-                EditKind::Insert => {
-                    self.delete_internal(e.offset..e.offset + e.text.chars().count(), cx);
-                    final_offset = Some(e.offset)
-                }
-                EditKind::Delete => {
-                    self.insert_internal(e.offset, &e.text, cx);
-                    final_offset = Some(e.offset)
-                }
-            }
-        }
-
-        self.history.redo_stack.push(edits);
-        cx.notify();
-        final_offset
-    }
-
-    pub fn redo(&mut self, cx: &mut Context<Self>) -> Option<usize> {
-        let edits = self.history.redo_stack.pop()?;
-        let mut final_offset = None;
-
-        for e in edits.iter() {
-            match e.kind {
-                EditKind::Delete => {
-                    self.delete_internal(e.offset..e.offset + e.text.chars().count(), cx);
-                    final_offset = Some(e.offset + e.text.chars().count());
-                }
-                EditKind::Insert => {
-                    self.insert_internal(e.offset, &e.text, cx);
-                    final_offset = Some(e.offset + e.text.chars().count());
-                }
-            }
-        }
-        self.history.undo_stack.push(edits);
-        cx.notify();
-        final_offset
-    }
-
-    fn end_edit_group(&mut self) {
-        if !self.history.current_edit.is_empty() {
-            self.history
-                .undo_stack
-                .push(self.history.current_edit.clone());
-            self.history.current_edit.clear();
-        }
-    }
-
-    fn rope_offset_to_point(rope: &Rope, char_offset: usize) -> tree_sitter::Point {
-        let line = rope.char_to_line(char_offset);
-        let line_start_char = rope.line_to_char(line);
-        let col = char_offset - line_start_char;
-
-        let byte_col = rope.char_to_byte(char_offset) - rope.char_to_byte(col);
-
-        tree_sitter::Point::new(line, byte_col)
-    }
-}
-
 impl EventEmitter<BufferEvent> for Buffer {}
 
 pub struct VimEditor {
@@ -319,10 +41,15 @@ pub struct VimEditor {
     pub focus_handle: FocusHandle,
 }
 
-impl Focusable for VimEditor {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
+#[derive(std::default::Default, PartialEq)]
+struct TextStyle {
+    color: Option<gpui::Rgba>,
+}
+
+struct StyleSpan {
+    start_byte: usize,
+    end_byte: usize,
+    style: TextStyle,
 }
 
 impl VimEditor {
@@ -428,7 +155,7 @@ impl VimEditor {
 
         let mut folded_ranges = Vec::new();
 
-        if let Some(tree) = &buffer.tree {
+        if let Some(tree) = &buffer.syntax.tree {
             for &start_line in &self.folded_start_lines {
                 let byte_offset = buffer.text.line_to_byte(start_line);
                 let mut node = tree
@@ -510,23 +237,10 @@ impl VimEditor {
             return;
         }
 
-        if terminal_key
-            == TerminalKey::from(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL))
-            && event.keystroke.modifiers.control
-        {
-            println!("Sending event");
-            cx.emit(EditorEvent::OpenFinder);
-            return;
-        }
-
         self.vim_machine.input_key(terminal_key);
 
         while let Some((action, context)) = self.vim_machine.pop() {
             self.execute_action(action, context, cx);
-        }
-
-        if self.vim_machine.mode() == VimMode::Normal {
-            self.buffer.update(cx, |buf, _| buf.end_edit_group());
         }
 
         self.is_insert_mode = self.vim_machine.mode() == VimMode::Insert;
@@ -556,54 +270,64 @@ impl VimEditor {
             // 1. Text Insertion (Typing in Insert mode)
             // Modalkit emits characters or strings directly as EditorActions.
             Action::Editor(EditorAction::InsertText(insert_action)) => match insert_action {
-                InsertTextAction::Type(Specifier::Exact(c), _dir, _count) => {
-                    match c {
-                        // 1. Standard character typing
-                        Char::Single(ch) => {
-                            self.buffer.update(cx, |buf, cx| {
-                                buf.insert_text(self.cursor_offset, &ch.to_string(), cx);
-                            });
+                InsertTextAction::Type(Specifier::Exact(c), _dir, _count) => match c {
+                    Char::Single(ch) => {
+                        self.buffer.update(cx, |buf, cx| {
+                            let old_lines = buf.text.len_lines();
+                            buf.insert(self.cursor_offset, &ch.to_string());
+                            let new_lines = buf.text.len_lines();
 
-                            let text = self.buffer.read(cx).text.clone();
+                            if new_lines > old_lines {
+                                let row = buf.text.char_to_line(self.cursor_offset);
+                                cx.emit(BufferEvent::LinesInserted {
+                                    row,
+                                    line_delta: new_lines - old_lines,
+                                });
+                            }
+                        });
 
-                            self.cursor_offset += 1;
-                            let current_line_idx = text.char_to_line(self.cursor_offset);
-                            let current_line_start = text.line_to_char(current_line_idx);
-                            self.target_col = self.cursor_offset - current_line_start;
-                        }
+                        let text = self.buffer.read(cx).text.clone();
 
-                        // 2. Vim Digraphs (e.g., typing two chars to make a special symbol)
-                        Char::Digraph(c1, c2) => {
-                            // For now, just push both. Later you'd look them up in a Digraph table.
-
-                            let concat: String = [c1, c2].iter().collect();
-
-                            self.buffer.update(cx, |buf, cx| {
-                                buf.insert_text(self.cursor_offset, &concat, cx);
-                            });
-
-                            let text = self.buffer.read(cx).text.clone();
-
-                            self.cursor_offset += 2;
-                            let current_line_idx = text.char_to_line(self.cursor_offset);
-                            let current_line_start = text.line_to_char(current_line_idx);
-                            self.target_col = self.cursor_offset - current_line_start;
-                        }
-
-                        // 3. Control Sequences
-                        Char::CtrlSeq(seq) => {
-                            println!("CtrlSeq insertion not implemented: {}", seq);
-                        }
-
-                        // 4. Copying from the line above/below (Ctrl-Y / Ctrl-E in Vim)
-                        Char::CopyLine(dir) => {
-                            println!(
-                                "CopyLine insertion not implemented for direction: {:?}",
-                                dir
-                            );
-                        }
+                        self.cursor_offset += 1;
+                        let current_line_idx = text.char_to_line(self.cursor_offset);
+                        let current_line_start = text.line_to_char(current_line_idx);
+                        self.target_col = self.cursor_offset - current_line_start;
                     }
-                }
+
+                    Char::Digraph(c1, c2) => {
+                        let concat: String = [c1, c2].iter().collect();
+
+                        self.buffer.update(cx, |buf, cx| {
+                            let old_lines = buf.text.len_lines();
+                            buf.insert(self.cursor_offset, &concat);
+                            let new_lines = buf.text.len_lines();
+
+                            if new_lines > old_lines {
+                                let row = buf.text.char_to_line(self.cursor_offset);
+                                cx.emit(BufferEvent::LinesInserted {
+                                    row,
+                                    line_delta: new_lines - old_lines,
+                                });
+                            }
+                        });
+
+                        let text = self.buffer.read(cx).text.clone();
+
+                        self.cursor_offset += 2;
+                        let current_line_idx = text.char_to_line(self.cursor_offset);
+                        let current_line_start = text.line_to_char(current_line_idx);
+                        self.target_col = self.cursor_offset - current_line_start;
+                    }
+                    Char::CtrlSeq(seq) => {
+                        println!("CtrlSeq insertion not implemented: {}", seq);
+                    }
+                    Char::CopyLine(dir) => {
+                        println!(
+                            "CopyLine insertion not implemented for direction: {:?}",
+                            dir
+                        );
+                    }
+                },
                 InsertTextAction::Type(Specifier::Contextual, _, _) => {
                     println!("Contextual Type action not implemented");
                 }
@@ -640,8 +364,19 @@ impl VimEditor {
                             }
                         };
 
-                        self.buffer
-                            .update(cx, |buf, cx| buf.insert_text(offset, &full_text, cx));
+                        self.buffer.update(cx, |buf, cx| {
+                            let old_lines = buf.text.len_lines();
+                            buf.insert(offset, &full_text);
+                            let new_lines = buf.text.len_lines();
+
+                            if new_lines > old_lines {
+                                let row = buf.text.char_to_line(self.cursor_offset);
+                                cx.emit(BufferEvent::LinesInserted {
+                                    row,
+                                    line_delta: new_lines - old_lines,
+                                });
+                            }
+                        });
 
                         self.cursor_offset = offset + full_text.chars().count() + 1;
                     }
@@ -651,10 +386,6 @@ impl VimEditor {
                     println!("Unhandled InsertTextAction: {:?}", insert_action);
                 }
             },
-
-            // 2. Text Editing (Delete, Yank, Change, etc.)
-            // These are nested under `Edit` and wrapped in a `Specifier` to denote
-            // whether the action was explicit (Exact) or implied (Contextual).
             Action::Editor(EditorAction::Edit(specifier, target)) => {
                 match (specifier.clone(), target.clone()) {
                     (Specifier::Contextual, EditTarget::Motion(move_type, count))
@@ -773,7 +504,6 @@ impl VimEditor {
                             _ => println!("Unknown MoveType: {:?}", move_type),
                         }
                     }
-                    // If it is an explicit Delete command (like pressing 'x' or 'd')
                     (Specifier::Exact(EditAction::Delete), target) => match target {
                         EditTarget::Motion(MoveType::Column(MoveDir1D::Previous, _), count) => {
                             let multiplier = match count {
@@ -786,7 +516,19 @@ impl VimEditor {
                             if start < self.cursor_offset {
                                 let range = start..self.cursor_offset;
 
-                                self.buffer.update(cx, |buf, cx| buf.delete_text(range, cx));
+                                self.buffer.update(cx, |buf, cx| {
+                                    let old_lines = buf.text.len_lines();
+                                    buf.delete(range.start, range.end);
+                                    let new_lines = buf.text.len_lines();
+
+                                    if old_lines > new_lines {
+                                        let row = buf.text.char_to_line(range.start);
+                                        cx.emit(BufferEvent::LinesDeleted {
+                                            row,
+                                            line_delta: old_lines - new_lines,
+                                        });
+                                    }
+                                });
 
                                 self.cursor_offset = start;
                             }
@@ -801,7 +543,19 @@ impl VimEditor {
                             let end = (self.cursor_offset + multiplier).min(max_len);
 
                             let range = self.cursor_offset..end;
-                            self.buffer.update(cx, |buf, cx| buf.delete_text(range, cx));
+                            self.buffer.update(cx, |buf, cx| {
+                                let old_lines = buf.text.len_lines();
+                                buf.delete(range.start, range.end);
+                                let new_lines = buf.text.len_lines();
+
+                                if old_lines > new_lines {
+                                    let row = buf.text.char_to_line(range.start);
+                                    cx.emit(BufferEvent::LinesDeleted {
+                                        row,
+                                        line_delta: old_lines - new_lines,
+                                    });
+                                }
+                            });
 
                             let new_len = self.buffer.read(cx).text.chars().count();
                             self.cursor_offset = self.cursor_offset.min(new_len);
@@ -860,38 +614,43 @@ impl VimEditor {
                     }
                 }
             }
-            Action::Editor(EditorAction::History(HistoryAction::Undo(count))) => {
-                let multiplier = match count {
-                    Count::Exact(n) => n,
-                    Count::Contextual => ctx.get_count().unwrap_or(1),
-                    _ => 1,
-                };
-
-                for _ in 0..multiplier {
-                    self.buffer.update(cx, |buf, cx| {
-                        if let Some(offset) = buf.undo(cx) {
-                            self.cursor_offset = offset;
-                        }
-                    });
+            Action::Editor(EditorAction::History(action)) => match action {
+                HistoryAction::Checkpoint => {
+                    self.buffer.update(cx, |buf, _| buf.end_transaction());
                 }
-            }
-            Action::Editor(EditorAction::History(HistoryAction::Redo(count))) => {
-                let multiplier = match count {
-                    Count::Exact(n) => n,
-                    Count::Contextual => ctx.get_count().unwrap_or(1),
-                    _ => 1,
-                };
+                HistoryAction::Redo(count) => {
+                    let multiplier = match count {
+                        Count::Exact(n) => n,
+                        Count::Contextual => ctx.get_count().unwrap_or(1),
+                        _ => 1,
+                    };
 
-                for _ in 0..multiplier {
-                    self.buffer.update(cx, |buf, cx| {
-                        if let Some(offset) = buf.redo(cx) {
-                            self.cursor_offset = offset;
-                        }
-                    });
+                    for _ in 0..multiplier {
+                        self.buffer.update(cx, |buf, cx| {
+                            if let Some(offset) = buf.redo() {
+                                self.cursor_offset = offset;
+                            }
+                        });
+                    }
                 }
-            }
 
-            // 3. Fallback for Unimplemented Actions (Movements, Window commands, etc.)
+                HistoryAction::Undo(count) => {
+                    let multiplier = match count {
+                        Count::Exact(n) => n,
+                        Count::Contextual => ctx.get_count().unwrap_or(1),
+                        _ => 1,
+                    };
+
+                    for _ in 0..multiplier {
+                        self.buffer.update(cx, |buf, cx| {
+                            if let Some(offset) = buf.undo() {
+                                self.cursor_offset = offset;
+                            }
+                        });
+                    }
+                }
+            },
+
             _ => {
                 println!("Action triggered but not implemented: {:?}", action);
             }
@@ -935,6 +694,7 @@ impl VimEditor {
             "escape" => KeyCode::Esc,
             "enter" => KeyCode::Enter,
             "backspace" => KeyCode::Backspace,
+            "delete" => KeyCode::Delete,
             "space" => KeyCode::Char(' '),
             "left" => KeyCode::Left,
             "right" => KeyCode::Right,
@@ -1000,7 +760,7 @@ impl VimEditor {
         let buffer = self.buffer.read(cx);
         let byte_offset = buffer.text.char_to_byte(self.cursor_offset);
 
-        let tree = match &buffer.tree {
+        let tree = match &buffer.syntax.tree {
             Some(t) => t,
             None => return,
         };
@@ -1039,104 +799,58 @@ impl VimEditor {
     }
 }
 
-#[derive(std::default::Default, PartialEq)]
-struct TextStyle {
-    color: Option<gpui::Rgba>,
-}
-
-struct StyleSpan {
-    start_byte: usize,
-    end_byte: usize,
-    style: TextStyle,
+impl Focusable for VimEditor {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
 }
 
 impl Render for VimEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let buffer = self.buffer.read(cx);
-        let text = buffer.text.clone();
-        let cursor_line_idx = text.char_to_line(self.cursor_offset);
+        let buffer_entity = self.buffer.clone();
 
+        let cursor_line_idx = self.buffer.read(cx).text.char_to_line(self.cursor_offset);
         let cursor_offset = self.cursor_offset.clone();
         let cursor_visible = self.cursor_visible.clone();
         let is_insert_mode = self.is_insert_mode.clone();
         let line_map = self.line_map.clone();
 
-        let query = buffer.query.clone();
-        let tree = buffer.tree.clone();
-
         let editor_list = uniform_list(
             "editor_list",
             line_map.len(),
-            move |visible_range, _window, _app| {
-                let physical_line_start = line_map.get(visible_range.start).copied().unwrap_or(0);
-                let physical_end_line = line_map
-                    .get(visible_range.end)
-                    .copied()
-                    .unwrap_or(text.len_lines());
-
-                let start_byte = text.line_to_byte(physical_line_start);
-                let end_byte = if physical_end_line < text.len_lines() {
-                    text.line_to_byte(physical_end_line)
-                } else {
-                    text.len_bytes()
-                };
-
-                let mut stye_spans: Vec<StyleSpan> = Vec::new();
-
-                if let Some(tree) = &tree {
-                    let mut cursor = tree_sitter::QueryCursor::new();
-                    cursor.set_byte_range(start_byte..end_byte);
-
-                    let matches = cursor.matches(&query, tree.root_node(), "".as_bytes());
-
-                    matches.for_each(|m| {
-                        let mut heading_level = 0;
-
-                        for cap in m.captures {
-                            let capture_name = query.capture_names()[cap.index as usize];
-                            if capture_name == "heading.stars" {
-                                heading_level = cap.node.end_byte() - cap.node.start_byte();
-                            }
-                        }
-
-                        for cap in m.captures {
-                            let capture_name = query.capture_names()[cap.index as usize];
-
-                            let mut style = TextStyle::default();
-                            match capture_name {
-                                "heading" => {
-                                    style.color = match heading_level {
-                                        1 => Some(rgba(0x00cef7ff)),
-                                        2 => Some(rgba(0x0052f7ff)),
-                                        3 => Some(rgba(0x00f7a4ff)),
-                                        _ => Some(rgba(0x0000eeff)),
-                                    }
-                                }
-                                _ => continue,
-                            }
-
-                            stye_spans.push(StyleSpan {
-                                start_byte: cap.node.start_byte(),
-                                end_byte: cap.node.end_byte(),
-                                style,
-                            });
-                        }
-                    });
-                }
+            move |visible_range, _window, app| {
+                let buffer = buffer_entity.read(app);
+                let text = buffer.text.clone();
 
                 visible_range
-                    .map(|virtual_idx| {
-                        let line_idx = line_map[virtual_idx];
+                    .map(|virtual_index| {
+                        let line_idx = line_map[virtual_index];
 
                         let line = text.line(line_idx);
                         let line_start_char = text.line_to_char(line_idx);
                         let line_start_byte = text.line_to_byte(line_idx);
-                        let line_end_byte = line_start_byte + line.len_bytes();
 
-                        let line_spans: Vec<&StyleSpan> = stye_spans
+                        let raw_syntax = buffer
+                            .syntax
+                            .get_highlights(&line.to_string(), line_start_byte);
+
+                        let line_spans: Vec<StyleSpan> = raw_syntax
                             .iter()
-                            .filter(|s| {
-                                s.start_byte < line_end_byte && line_start_byte < s.end_byte
+                            .map(|span| {
+                                let mut style = TextStyle::default();
+                                match span.style {
+                                    manta_core::syntax::OrgToken::HeadlineStars
+                                    | manta_core::syntax::OrgToken::Headline => {
+                                        style.color = rgb(0x6f9cde).into()
+                                    }
+                                    manta_core::syntax::OrgToken::Text => {}
+                                }
+
+                                StyleSpan {
+                                    start_byte: line_start_byte + span.start_byte,
+                                    end_byte: line_start_byte + span.end_byte,
+                                    style,
+                                }
                             })
                             .collect();
 
@@ -1290,26 +1004,4 @@ impl Render for VimEditor {
                     )),
             )
     }
-}
-
-fn parse_rope(
-    parser: &mut tree_sitter::Parser,
-    old_tree: Option<&tree_sitter::Tree>,
-    text: &Rope,
-) -> Option<tree_sitter::Tree> {
-    parser.parse_with_options(
-        &mut move |byte_offset, _| {
-            if byte_offset > text.bytes().len() {
-                return &[][..];
-            }
-
-            let (chunk, byte_idx, _, _) = text.chunk_at_byte(byte_offset);
-
-            let offset_in_chunk = byte_offset - byte_idx;
-
-            chunk[offset_in_chunk..].as_bytes()
-        },
-        old_tree,
-        None,
-    )
 }

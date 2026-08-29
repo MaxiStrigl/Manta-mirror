@@ -1,0 +1,11 @@
+[package]
+name = "Manta"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gpui.workspace = true 
+manta-core.workspace = true
+manta-gui.workspace = true
+
+

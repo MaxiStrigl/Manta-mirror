@@ -1,13 +1,7 @@
-pub mod editor;
-pub mod fuzzy_search;
-pub mod new_file_finder;
-pub mod workspace;
-
 use std::path::PathBuf;
 
 use gpui::*;
-
-use crate::workspace::Workspace;
+use manta_gui::Workspace;
 
 fn main() {
     let args: Vec<_> = std::env::args().collect();

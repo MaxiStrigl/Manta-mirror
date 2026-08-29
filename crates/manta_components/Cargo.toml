@@ -1,0 +1,8 @@
+[package]
+name = "manta_components"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gpui.workspace = true 
+nucleo.workspace = true
