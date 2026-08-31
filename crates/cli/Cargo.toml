@@ -7,5 +7,5 @@ edition.workspace = true
 gpui.workspace = true 
 manta-core.workspace = true
 manta-gui.workspace = true
-
+file-finder.workspace = true
 

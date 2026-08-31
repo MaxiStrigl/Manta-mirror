@@ -6,6 +6,7 @@ version = 4
 name = "Manta"
 version = "0.1.0"
 dependencies = [
+ "file-finder",
  "gpui",
  "manta-core",
  "manta-gui",
@@ -1734,6 +1735,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "file-finder"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "manta-api",
+ "manta_components",
+]
+
+[[package]]
 name = "filedescriptor"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3192,6 +3202,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "manta-api"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+]
+
+[[package]]
 name = "manta-core"
 version = "0.1.0"
 dependencies = [
@@ -3205,6 +3222,7 @@ name = "manta-gui"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "manta-api",
  "manta-core",
  "modalkit",
 ]

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cli", "crates/manta-core", "crates/manta-gui", "crates/manta_components"]
+members = ["crates/cli", "crates/default-plugins/file-finder", "crates/manta-api", "crates/manta-core", "crates/manta-gui", "crates/manta_components"]
 resolver = "3"
 
 [workspace.package]
@@ -18,6 +18,9 @@ cc = "1.0"
 manta_components = { path = "./crates/manta_components/"}
 manta-core = {path = "./crates/manta-core/"}
 manta-gui = { path = "./crates/manta-gui/" }
+manta-api = { path = "./crates/manta-api/"}
+
+file-finder = {path = "./crates/default-plugins/file-finder/"}
 
 [profile.dev]
 opt-level = 1

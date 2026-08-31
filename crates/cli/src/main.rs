@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use file_finder::FileFinderPlugin;
 use gpui::*;
 use manta_gui::Workspace;
 
@@ -32,7 +33,15 @@ fn main() {
 
         let window = cx
             .open_window(options, |_window, cx| {
-                cx.new(|cx| Workspace::new(cx, workspace_dir, initial_file))
+                let workspace = cx.new(|cx| Workspace::new(cx, workspace_dir, initial_file));
+
+                workspace.update(cx, |workspace, cx| {
+                    let finder = Box::new(FileFinderPlugin);
+
+                    workspace.load_plugin(finder, cx);
+                });
+
+                workspace
             })
             .expect("Failed to open window");
 

@@ -3,7 +3,10 @@ use std::time::Instant;
 
 use gpui::*;
 use manta_core::buffer::Buffer;
-use modalkit::actions::{Action, EditAction, EditorAction, HistoryAction, InsertTextAction};
+use modalkit::actions::{
+    Action, CommandAction, CommandBarAction, EditAction, EditorAction, HistoryAction,
+    InsertTextAction,
+};
 use modalkit::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use modalkit::editing::context::EditContext;
 use modalkit::env::vim::VimMode;
@@ -14,6 +17,8 @@ use modalkit::prelude::*;
 use modalkit::{
     editing::application::EmptyInfo, env::vim::keybindings::default_vim_keys, key::TerminalKey,
 };
+
+use crate::workspace::EditorEvent;
 
 enum BufferEvent {
     LinesInserted { row: usize, line_delta: usize },
@@ -649,6 +654,12 @@ impl VimEditor {
                         });
                     }
                 }
+            },
+            Action::CommandBar(action) => match action {
+                CommandBarAction::Focus(_, command_type, action) => {
+                    cx.emit(EditorEvent::ExecuteCommand("file-finder:open".to_string()));
+                }
+                CommandBarAction::Unfocus => todo!(),
             },
 
             _ => {
