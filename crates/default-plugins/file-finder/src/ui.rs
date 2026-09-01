@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use gpui::{Context, EventEmitter, IntoElement, Window, div, rgb};
+use gpui::{Context, EventEmitter, FocusHandle, IntoElement, Window, div, rgb};
 use gpui::{KeyDownEvent, prelude::*};
 
 use manta_components::{FuzzySearch, FuzzySearchEvent};
@@ -22,6 +22,8 @@ pub struct FileEntry {
 pub struct FileFinder {
     pub searcher: FuzzySearch<FileEntry>,
     current_dir: PathBuf,
+    input_text: String,
+    pub focus_handle: FocusHandle,
 }
 
 impl EventEmitter<FinderEvent> for FileFinder {}
@@ -29,7 +31,6 @@ impl EventEmitter<FinderEvent> for FileFinder {}
 impl FileFinder {
     pub fn new(cx: &mut Context<Self>, rootdir: PathBuf) -> FileFinder {
         let searcher = FuzzySearch::new(
-            cx.focus_handle(),
             |entry: &FileEntry, is_selected: bool| {
                 let display = if entry.is_dir {
                     format!("{}/", entry.name)
@@ -63,6 +64,8 @@ impl FileFinder {
         let mut finder = FileFinder {
             searcher,
             current_dir: rootdir.clone(),
+            input_text: String::new(),
+            focus_handle: cx.focus_handle(),
         };
         finder.load_dir(cx, rootdir);
 
@@ -115,9 +118,8 @@ impl FileFinder {
 
             let _ = cx.update(|app| {
                 this.update(app, |this, cx| {
-                    this.searcher.clear_search();
                     this.searcher.set_all_items(entries);
-                    this.searcher.set_prefix(display_path);
+                    this.input_text.clear();
                     cx.notify();
                 })
             });
@@ -131,24 +133,47 @@ impl FileFinder {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let action = self.searcher.handle_key_down(event);
+        let opt_action = self.searcher.handle_key_down(event);
 
-        match action {
-            FuzzySearchEvent::Select(entry) => {
-                if entry.is_dir {
-                    self.load_dir(cx, entry.path);
+        if let Some(action) = opt_action {
+            match action {
+                FuzzySearchEvent::Select(entry) => {
+                    if entry.is_dir {
+                        self.load_dir(cx, entry.path);
+                    } else {
+                        cx.emit(FinderEvent::Open(entry.path.to_string_lossy().to_string()));
+                    }
+                }
+                _ => {}
+            }
+            cx.notify();
+            return;
+        }
+
+        let is_ctrl = event.keystroke.modifiers.control;
+
+        match event.keystroke.key.as_str() {
+            "escape" => {
+                cx.emit(FinderEvent::Close);
+            }
+            "backspace" => {
+                if self.input_text.pop().is_some() {
+                    self.searcher.update_query(&self.input_text);
                 } else {
-                    cx.emit(FinderEvent::Open(entry.path.to_string_lossy().to_string()));
+                    if let Some(parent) = self.current_dir.parent() {
+                        let path = parent.to_path_buf();
+                        self.load_dir(cx, path);
+                    }
                 }
             }
-            FuzzySearchEvent::Close => cx.emit(FinderEvent::Close),
-            FuzzySearchEvent::BackspaceOnEmptySearch => {
-                if let Some(parent) = self.current_dir.parent() {
-                    let path = parent.to_path_buf();
-                    self.load_dir(cx, path);
+            _ => {
+                if let Some(c) = &event.keystroke.key_char {
+                    if !is_ctrl {
+                        self.input_text.push_str(c);
+                        self.searcher.update_query(&self.input_text);
+                    }
                 }
             }
-            FuzzySearchEvent::None => {}
         }
 
         cx.notify();
@@ -157,6 +182,12 @@ impl FileFinder {
 
 impl Render for FileFinder {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.searcher.render(cx, Self::handle_key_down)
+        div()
+            .flex()
+            .flex_col()
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(Self::handle_key_down))
+            .child(div().child(format!("Search File: {}", self.input_text)))
+            .child(self.searcher.render_list())
     }
 }

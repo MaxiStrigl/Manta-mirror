@@ -17,6 +17,7 @@ impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for FileFinderPlugin {
     fn on_load(&self, api: &mut dyn manta_api::EditorAPI<T>) {
         api.register_command(
             "file-finder:open",
+            "Open File Finder",
             Box::new(|api, cx| {
                 let root_dir = api.workspace_dir();
                 let file_finder = cx.new(|cx| FileFinder::new(cx, root_dir));
@@ -32,7 +33,7 @@ impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for FileFinderPlugin {
                     },
                 )
                 .detach();
-                let handle = file_finder.read(cx).searcher.focus_handle.clone();
+                let handle = file_finder.read(cx).focus_handle.clone();
 
                 api.open_panel(file_finder.into(), Some(handle), cx);
             }),
