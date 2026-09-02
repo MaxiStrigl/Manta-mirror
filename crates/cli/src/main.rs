@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use file_finder::FileFinderPlugin;
 use gpui::*;
 use manta_gui::Workspace;
+use vim_command_bar::VimCommandBarPlugin;
 
 fn main() {
     let args: Vec<_> = std::env::args().collect();
@@ -37,8 +38,10 @@ fn main() {
 
                 workspace.update(cx, |workspace, cx| {
                     let finder = Box::new(FileFinderPlugin);
-
                     workspace.load_plugin(finder, cx);
+
+                    let bar = Box::new(VimCommandBarPlugin);
+                    workspace.load_plugin(bar, cx);
                 });
 
                 workspace

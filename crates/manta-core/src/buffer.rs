@@ -1,4 +1,8 @@
-use std::io::Error;
+use std::{
+    fs::File,
+    io::{BufWriter, Error},
+    path::PathBuf,
+};
 
 use ropey::Rope;
 use tree_sitter::InputEdit;
@@ -12,6 +16,7 @@ pub struct Buffer {
     pub text: Rope,
     pub syntax: OrgSyntax,
     history: History,
+    path: Option<PathBuf>,
 }
 
 impl Buffer {
@@ -24,11 +29,12 @@ impl Buffer {
             text,
             syntax,
             history,
+            path: None,
         }
     }
 
     pub fn from_file(path: impl AsRef<std::path::Path>) -> Result<Buffer, Error> {
-        let file = std::fs::File::open(path)?;
+        let file = std::fs::File::open(&path)?;
         let text = Rope::from_reader(file)?;
         let history = History::new();
         let syntax = OrgSyntax::new();
@@ -37,7 +43,24 @@ impl Buffer {
             text,
             syntax,
             history,
+            path: Some(path.as_ref().to_path_buf()),
         })
+    }
+
+    pub fn save(&mut self) -> Result<(), std::io::Error> {
+        if let Some(path) = &self.path {
+            let file = File::create(path)?;
+            let mut writer = BufWriter::new(file);
+
+            self.text.write_to(&mut writer)?;
+
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "No file path stred in this buffer",
+            ))
+        }
     }
 
     pub fn insert(&mut self, char_idx: usize, chunk: &str) {

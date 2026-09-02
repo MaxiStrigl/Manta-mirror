@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use gpui::AppContext;
+use gpui::{AppContext, Context};
 use manta_api::{EditorAPI, MantaPlugin};
 
 use crate::ui::FileFinder;
@@ -14,7 +14,7 @@ impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for FileFinderPlugin {
         "default-file-finder"
     }
 
-    fn on_load(&self, api: &mut dyn manta_api::EditorAPI<T>) {
+    fn on_load(&self, api: &mut dyn manta_api::EditorAPI<T>, _cs: &mut Context<T>) {
         api.register_command(
             "file-finder:open",
             "Open File Finder",

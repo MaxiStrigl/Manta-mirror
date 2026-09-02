@@ -27,7 +27,7 @@ enum BufferEvent {
 impl EventEmitter<BufferEvent> for Buffer {}
 
 pub struct VimEditor {
-    buffer: Entity<Buffer>,
+    pub buffer: Entity<Buffer>,
     _buffer_subscription: Subscription,
 
     cursor_offset: usize,
@@ -234,12 +234,18 @@ impl VimEditor {
 
         let terminal_key = Self::translate_key(event);
 
-        if terminal_key == TerminalKey::from(KeyCode::Tab)
-            && self.vim_machine.mode() == VimMode::Normal
-        {
-            self.toggle_fold(cx);
-            self.last_activity = Instant::now();
-            return;
+        if self.vim_machine.mode() == VimMode::Normal {
+            if event.keystroke.key.as_str() == ":" {
+                println!("Open command bar");
+                cx.emit(EditorEvent::ExecuteCommand("command-bar:open".to_string()));
+                return;
+            }
+
+            if terminal_key == TerminalKey::from(KeyCode::Tab) {
+                self.toggle_fold(cx);
+                self.last_activity = Instant::now();
+                return;
+            }
         }
 
         self.vim_machine.input_key(terminal_key);
@@ -655,13 +661,6 @@ impl VimEditor {
                     }
                 }
             },
-            Action::CommandBar(action) => match action {
-                CommandBarAction::Focus(_, command_type, action) => {
-                    cx.emit(EditorEvent::ExecuteCommand("file-finder:open".to_string()));
-                }
-                CommandBarAction::Unfocus => todo!(),
-            },
-
             _ => {
                 println!("Action triggered but not implemented: {:?}", action);
             }
@@ -996,23 +995,6 @@ impl Render for VimEditor {
                     .p_4()
                     .text_color(rgb(0x4d4d4d))
                     .child(editor_list),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .h_6()
-                    .bg(rgb(0x007acc))
-                    .text_color(rgb(0xffffff))
-                    .text_sm()
-                    .font_weight(FontWeight::BOLD)
-                    .px_2()
-                    .flex()
-                    .items_center()
-                    .child(format!(
-                        "Cursor offset: {} | Line: {}",
-                        self.cursor_offset,
-                        cursor_line_idx + 1
-                    )),
             )
     }
 }
