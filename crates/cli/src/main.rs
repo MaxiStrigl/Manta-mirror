@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use file_finder::FileFinderPlugin;
 use gpui::*;
 use manta_gui::Workspace;
+use typst::TypstPlugin;
 use vim_command_bar::VimCommandBarPlugin;
 
 fn main() {
@@ -42,6 +43,9 @@ fn main() {
 
                     let bar = Box::new(VimCommandBarPlugin);
                     workspace.load_plugin(bar, cx);
+
+                    let typst = Box::new(TypstPlugin);
+                    workspace.load_plugin(typst, cx);
                 });
 
                 workspace

@@ -1,0 +1,8 @@
+[package]
+name = "typst"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+manta-api.workspace = true
+gpui.workspace = true

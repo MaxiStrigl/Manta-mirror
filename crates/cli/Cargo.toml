@@ -9,4 +9,4 @@ manta-core.workspace = true
 manta-gui.workspace = true
 file-finder.workspace = true
 vim-command-bar.workspace = true
-
+typst.workspace = true

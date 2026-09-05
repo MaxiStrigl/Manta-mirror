@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::ops::Range;
 use std::time::Instant;
 
 use gpui::*;
+use manta_api::InlineReplacement;
 use manta_core::buffer::Buffer;
 use modalkit::actions::{
     Action, CommandAction, CommandBarAction, EditAction, EditorAction, HistoryAction,
@@ -30,7 +32,7 @@ pub struct VimEditor {
     pub buffer: Entity<Buffer>,
     _buffer_subscription: Subscription,
 
-    cursor_offset: usize,
+    pub cursor_offset: usize,
     folded_start_lines: Vec<usize>,
     line_map: Vec<usize>,
 
@@ -44,9 +46,12 @@ pub struct VimEditor {
 
     scroll_handle: UniformListScrollHandle,
     pub focus_handle: FocusHandle,
+
+    pub replacements: HashMap<usize, InlineReplacement>,
+    pub next_replacement_id: usize,
 }
 
-#[derive(std::default::Default, PartialEq)]
+#[derive(std::default::Default, PartialEq, Clone)]
 struct TextStyle {
     color: Option<gpui::Rgba>,
 }
@@ -147,6 +152,8 @@ impl VimEditor {
             _blink_task,
             line_map,
             folded_start_lines,
+            replacements: HashMap::new(),
+            next_replacement_id: 0,
         };
 
         res.rebuild_line_map(cx);
@@ -236,7 +243,6 @@ impl VimEditor {
 
         if self.vim_machine.mode() == VimMode::Normal {
             if event.keystroke.key.as_str() == ":" {
-                println!("Open command bar");
                 cx.emit(EditorEvent::ExecuteCommand("command-bar:open".to_string()));
                 return;
             }
@@ -783,7 +789,6 @@ impl VimEditor {
         // Find our section to collapse
         while let Some(n) = node {
             if n.kind() == "section" {
-                println!("Found section");
                 section_node = Some(n);
                 break;
             }
@@ -824,6 +829,7 @@ impl Render for VimEditor {
         let cursor_visible = self.cursor_visible.clone();
         let is_insert_mode = self.is_insert_mode.clone();
         let line_map = self.line_map.clone();
+        let replacements: Vec<InlineReplacement> = self.replacements.values().cloned().collect();
 
         let editor_list = uniform_list(
             "editor_list",
@@ -839,6 +845,16 @@ impl Render for VimEditor {
                         let line = text.line(line_idx);
                         let line_start_char = text.line_to_char(line_idx);
                         let line_start_byte = text.line_to_byte(line_idx);
+                        let line_end_byte = line_start_byte + line.len_bytes();
+
+                        let mut line_replacements: Vec<InlineReplacement> = replacements
+                            .iter()
+                            .filter(|r| {
+                                r.start_byte >= line_start_byte && r.start_byte < line_end_byte
+                            })
+                            .cloned()
+                            .collect();
+                        line_replacements.sort_by_key(|r| r.start_byte);
 
                         let raw_syntax = buffer
                             .syntax
@@ -886,6 +902,8 @@ impl Render for VimEditor {
                                 }
                             };
 
+                        let mut current_replacement: Option<&InlineReplacement> = None;
+
                         for ch in line.chars() {
                             if ch == '\n' {
                                 break;
@@ -893,6 +911,40 @@ impl Render for VimEditor {
 
                             let is_cursor =
                                 line_idx == cursor_line_idx && current_char_idx == cursor_offset;
+
+                            if current_replacement.is_none() {
+                                if let Some(rep) = line_replacements
+                                    .iter()
+                                    .find(|r| r.start_byte == current_byte)
+                                {
+                                    flush_chunk(
+                                        &mut current_chunk,
+                                        current_style.clone(),
+                                        &mut elements,
+                                    );
+
+                                    elements.push(rep.replacement.clone().into_any_element());
+
+                                    current_replacement = Some(&rep);
+                                }
+                            }
+
+                            if let Some(rep) = current_replacement {
+                                if is_cursor && cursor_visible {
+                                    elements.push(
+                                        div().w(px(2.0)).bg(rgba(0xccccccff)).into_any_element(),
+                                    );
+                                }
+
+                                current_byte += ch.len_utf8();
+                                current_char_idx += 1;
+
+                                if current_byte > rep.end_byte {
+                                    current_replacement = None;
+                                }
+
+                                continue;
+                            }
 
                             let mut char_style = TextStyle::default();
                             for span in &line_spans {

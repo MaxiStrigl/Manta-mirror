@@ -187,6 +187,61 @@ impl EditorAPI<Workspace> for Workspace {
             })
         })
     }
+
+    fn add_inline_replacement(
+        &mut self,
+        replacement: manta_api::InlineReplacement,
+        cx: &mut Context<Workspace>,
+    ) -> usize {
+        self.editor.update(cx, |editor, cx| {
+            let id = editor.next_replacement_id;
+            editor.next_replacement_id += 1;
+            editor.replacements.insert(id, replacement);
+            cx.notify();
+            id
+        })
+    }
+
+    fn remove_inline_replacement(&mut self, id: usize, cx: &mut Context<Workspace>) {
+        self.editor.update(cx, |editor, cx| {
+            editor.replacements.remove(&id);
+            cx.notify();
+        })
+    }
+
+    fn get_curosr_byte_offset(&mut self, cx: &mut Context<Workspace>) -> usize {
+        let editor = self.editor.read(cx);
+        let buffer = editor.buffer.clone();
+
+        buffer.read(cx).text.char_to_byte(editor.cursor_offset)
+    }
+
+    fn get_buffer_text(&mut self, cx: &mut Context<Workspace>) -> String {
+        let editor = self.editor.read(cx);
+        let buffer = editor.buffer.clone();
+
+        buffer.read(cx).text.to_string()
+    }
+
+    fn get_replacement_at_byte(
+        &self,
+        plugin_id: String,
+        byte_offset: usize,
+        cx: &mut Context<Workspace>,
+    ) -> Option<usize> {
+        let editor = self.editor.read(cx);
+
+        for (id, replacement) in &editor.replacements {
+            if replacement.plugin_id == plugin_id
+                && replacement.start_byte <= byte_offset
+                && replacement.end_byte >= byte_offset
+            {
+                return Some(*id);
+            }
+        }
+
+        None
+    }
 }
 
 impl Render for Workspace {

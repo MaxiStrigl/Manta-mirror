@@ -159,7 +159,6 @@ impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for VimCommandBarPlugin {
         api.set_bottom_bar(Some(bar.clone().into()), None, cx);
 
         cx.subscribe(&bar, |workspace: &mut T, view, command_id, cx| {
-            println!("running command");
             workspace.set_bottom_bar(Some(view.clone().into()), None, cx);
 
             view.update(cx, |bar, cx| {
@@ -180,7 +179,6 @@ impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for VimCommandBarPlugin {
             "command-bar:open",
             "Open Command Bar",
             Box::new(move |api, cx| {
-                println!("Open command bar");
                 let handle = bar.read(cx).focus_handle.clone();
                 bar.update(cx, |bar, cx| {
                     bar.set_commands(api.get_available_commands());
