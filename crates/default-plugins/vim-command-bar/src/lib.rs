@@ -167,7 +167,7 @@ impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for VimCommandBarPlugin {
                 cx.notify();
             });
 
-            workspace.focus_editor(cx);
+            workspace.focus_main_panel(cx);
 
             if command_id != "core:abort" {
                 let _ = workspace.execute_command(command_id, cx);

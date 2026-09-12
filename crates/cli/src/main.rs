@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use file_finder::FileFinderPlugin;
 use gpui::*;
+use manta_api::EditorAPI;
 use manta_gui::Workspace;
 use typst::TypstPlugin;
 use vim_command_bar::VimCommandBarPlugin;
@@ -54,7 +55,7 @@ fn main() {
 
         window
             .update(cx, |workspace, window, cx| {
-                cx.focus_view(&workspace.editor, window);
+                workspace.focus_main_panel(cx);
             })
             .unwrap();
     });

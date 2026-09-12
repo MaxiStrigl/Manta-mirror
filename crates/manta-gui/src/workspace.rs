@@ -6,10 +6,15 @@ use gpui::{Context, Entity, EventEmitter, FocusHandle, IntoElement, div, prelude
 use manta_api::{CommandInfo, EditorAPI, MantaPlugin};
 use manta_core::buffer::Buffer;
 
-use crate::{VimEditor, editor};
+use crate::{CustomPane, VimEditor, editor};
+
+enum CenterPane {
+    Editor(Entity<VimEditor>),
+    CustomUI(AnyView, FocusHandle),
+}
 
 pub struct Workspace {
-    pub editor: Entity<VimEditor>,
+    pub center_pane: CenterPane,
     pub workspace_dir: PathBuf,
 
     pub active_panel: Option<AnyView>,
@@ -56,8 +61,10 @@ impl Workspace {
         })
         .detach();
 
+        let center_pane = CenterPane::Editor(editor);
+
         let mut workspace = Self {
-            editor,
+            center_pane,
             workspace_dir,
             active_panel: None,
             next_focus: None,
@@ -123,7 +130,10 @@ impl EditorAPI<Workspace> for Workspace {
 
     fn close_panel(&mut self, cx: &mut Context<Workspace>) {
         self.active_panel = None;
-        self.next_focus = Some(self.editor.read(cx).focus_handle.clone());
+        self.next_focus = match &self.center_pane {
+            CenterPane::Editor(editor) => Some(editor.read(cx).focus_handle.clone()),
+            CenterPane::CustomUI(_, focus_handle) => Some(focus_handle.clone()),
+        };
         cx.notify();
     }
 
@@ -140,7 +150,7 @@ impl EditorAPI<Workspace> for Workspace {
         })
         .detach();
 
-        self.editor = new_editor;
+        self.center_pane = CenterPane::Editor(new_editor);
         self.close_panel(cx);
     }
 
@@ -173,19 +183,24 @@ impl EditorAPI<Workspace> for Workspace {
         Workspace::execute_command(self, name, cx)
     }
 
-    fn focus_editor(&mut self, cx: &mut Context<Workspace>) {
-        let editor_handle = self.editor.focus_handle(cx);
-        self.next_focus = Some(editor_handle);
+    fn focus_main_panel(&mut self, cx: &mut Context<Workspace>) {
+        let handle = match &self.center_pane {
+            CenterPane::Editor(editor) => editor.read(cx).focus_handle.clone(),
+            CenterPane::CustomUI(_, focus_handle) => focus_handle.clone(),
+        };
+        self.next_focus = Some(handle);
         cx.notify();
     }
 
     fn save_active_file(&mut self, cx: &mut Context<Workspace>) {
-        self.editor.update(cx, |editor, cx| {
-            editor.buffer.update(cx, |buffer, cx| match buffer.save() {
-                Ok(_) => println!("File Saved"),
-                Err(e) => println!("Failed to save file: {}", e),
+        if let CenterPane::Editor(editor) = &self.center_pane {
+            editor.update(cx, |editor, cx| {
+                editor.buffer.update(cx, |buffer, _cx| match buffer.save() {
+                    Ok(_) => println!("File Saved"),
+                    Err(e) => println!("Failed to save file: {}", e),
+                })
             })
-        })
+        }
     }
 
     fn add_inline_replacement(
@@ -193,34 +208,48 @@ impl EditorAPI<Workspace> for Workspace {
         replacement: manta_api::InlineReplacement,
         cx: &mut Context<Workspace>,
     ) -> usize {
-        self.editor.update(cx, |editor, cx| {
-            let id = editor.next_replacement_id;
-            editor.next_replacement_id += 1;
-            editor.replacements.insert(id, replacement);
-            cx.notify();
-            id
-        })
+        if let CenterPane::Editor(editor) = &self.center_pane {
+            editor.update(cx, |editor, cx| {
+                let id = editor.next_replacement_id;
+                editor.next_replacement_id += 1;
+                editor.replacements.insert(id, replacement);
+                cx.notify();
+                id
+            })
+        } else {
+            usize::MAX
+        }
     }
 
     fn remove_inline_replacement(&mut self, id: usize, cx: &mut Context<Workspace>) {
-        self.editor.update(cx, |editor, cx| {
-            editor.replacements.remove(&id);
-            cx.notify();
-        })
+        if let CenterPane::Editor(editor) = &self.center_pane {
+            editor.update(cx, |editor, cx| {
+                editor.replacements.remove(&id);
+                cx.notify();
+            })
+        }
     }
 
     fn get_curosr_byte_offset(&mut self, cx: &mut Context<Workspace>) -> usize {
-        let editor = self.editor.read(cx);
-        let buffer = editor.buffer.clone();
+        if let CenterPane::Editor(editor) = &self.center_pane {
+            let editor = editor.read(cx);
+            let buffer = editor.buffer.clone();
 
-        buffer.read(cx).text.char_to_byte(editor.cursor_offset)
+            buffer.read(cx).text.char_to_byte(editor.cursor_offset)
+        } else {
+            usize::MAX
+        }
     }
 
     fn get_buffer_text(&mut self, cx: &mut Context<Workspace>) -> String {
-        let editor = self.editor.read(cx);
-        let buffer = editor.buffer.clone();
+        if let CenterPane::Editor(editor) = &self.center_pane {
+            let editor = editor.read(cx);
+            let buffer = editor.buffer.clone();
 
-        buffer.read(cx).text.to_string()
+            buffer.read(cx).text.to_string()
+        } else {
+            String::new()
+        }
     }
 
     fn get_replacement_at_byte(
@@ -229,23 +258,57 @@ impl EditorAPI<Workspace> for Workspace {
         byte_offset: usize,
         cx: &mut Context<Workspace>,
     ) -> Option<usize> {
-        let editor = self.editor.read(cx);
+        if let CenterPane::Editor(editor) = &self.center_pane {
+            let editor = editor.read(cx);
 
-        for (id, replacement) in &editor.replacements {
-            if replacement.plugin_id == plugin_id
-                && replacement.start_byte <= byte_offset
-                && replacement.end_byte >= byte_offset
-            {
-                return Some(*id);
+            for (id, replacement) in &editor.replacements {
+                if replacement.plugin_id == plugin_id
+                    && replacement.start_byte <= byte_offset
+                    && replacement.end_byte >= byte_offset
+                {
+                    return Some(*id);
+                }
             }
+            None
+        } else {
+            None
         }
+    }
 
-        None
+    fn open_custom_panel(
+        &mut self,
+        view: AnyView,
+        focus: Option<FocusHandle>,
+        cx: &mut Context<Workspace>,
+    ) {
+        let pane = cx.new(|cx| CustomPane::new(view, cx));
+        let handle = if let Some(handle) = focus {
+            handle
+        } else {
+            pane.read(cx).focus_handle.clone()
+        };
+
+        cx.subscribe(&pane, |this, _, event, cx| match event {
+            EditorEvent::ExecuteCommand(name) => {
+                println!("Editor command");
+                let _ = this.execute_command(name, cx);
+            }
+        })
+        .detach();
+
+        self.center_pane = CenterPane::CustomUI(pane.clone().into(), handle);
+
+        self.close_panel(cx);
     }
 }
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let center_content = match &self.center_pane {
+            CenterPane::Editor(editor) => div().size_full().child(editor.clone()),
+            CenterPane::CustomUI(view, _) => div().child(view.clone()),
+        };
+
         if let Some(handle) = self.next_focus.take() {
             handle.focus(window);
         }
@@ -255,7 +318,7 @@ impl Render for Workspace {
             .flex_col()
             .size_full()
             .bg(rgb(0xe1e1e1))
-            .child(self.editor.clone());
+            .child(center_content);
 
         if let Some(panel) = &self.active_panel {
             layout = layout.child(
