@@ -1,0 +1,9 @@
+[package]
+name = "welcome-view"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gpui.workspace = true
+manta-api.workspace = true
+manta_components.workspace = true

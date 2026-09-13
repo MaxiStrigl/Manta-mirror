@@ -306,7 +306,7 @@ impl Render for Workspace {
     fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let center_content = match &self.center_pane {
             CenterPane::Editor(editor) => div().size_full().child(editor.clone()),
-            CenterPane::CustomUI(view, _) => div().child(view.clone()),
+            CenterPane::CustomUI(view, _) => div().size_full().child(view.clone()),
         };
 
         if let Some(handle) = self.next_focus.take() {

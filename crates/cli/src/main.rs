@@ -6,6 +6,7 @@ use manta_api::EditorAPI;
 use manta_gui::Workspace;
 use typst::TypstPlugin;
 use vim_command_bar::VimCommandBarPlugin;
+use welcome_view::WelcomeViewPlugin;
 
 fn main() {
     let args: Vec<_> = std::env::args().collect();
@@ -36,6 +37,8 @@ fn main() {
 
         let window = cx
             .open_window(options, |_window, cx| {
+                let is_empty_start = initial_file.is_none();
+
                 let workspace = cx.new(|cx| Workspace::new(cx, workspace_dir, initial_file));
 
                 workspace.update(cx, |workspace, cx| {
@@ -47,7 +50,16 @@ fn main() {
 
                     let typst = Box::new(TypstPlugin);
                     workspace.load_plugin(typst, cx);
+
+                    let welcome = Box::new(WelcomeViewPlugin);
+                    workspace.load_plugin(welcome, cx);
                 });
+
+                if is_empty_start {
+                    workspace.update(cx, |workspace, cx| {
+                        let _ = workspace.execute_command("welcome:open", cx);
+                    })
+                }
 
                 workspace
             })

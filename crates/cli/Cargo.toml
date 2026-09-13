@@ -8,6 +8,8 @@ gpui.workspace = true
 manta-core.workspace = true
 manta-gui.workspace = true
 manta-api.workspace = true
+
 file-finder.workspace = true
 vim-command-bar.workspace = true
 typst.workspace = true
+welcome-view.workspace = true
