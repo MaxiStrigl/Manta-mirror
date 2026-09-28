@@ -25,7 +25,7 @@ impl<T: 'static> MantaPlugin<T> for TypstPlugin {
             "typst-mock:toggle",
             "Toggle the red square",
             Box::new(|api, cx| {
-                let cursor = api.get_curosr_byte_offset(cx);
+                let cursor = api.get_cursor_byte_offset(cx);
 
                 if let Some(id) = api.get_replacement_at_byte(MOCK_TYPST_ID.to_string(), cursor, cx)
                 {

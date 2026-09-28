@@ -152,6 +152,7 @@ impl EditorAPI<Workspace> for Workspace {
 
         self.center_pane = CenterPane::Editor(new_editor);
         self.close_panel(cx);
+        let _ = self.execute_command("command-bar:update", cx);
     }
 
     fn workspace_dir(&self) -> PathBuf {
@@ -166,6 +167,19 @@ impl EditorAPI<Workspace> for Workspace {
                 description: description.clone(),
             })
             .collect()
+    }
+
+    fn get_buffer_path(&self, cx: &mut Context<Workspace>) -> Option<PathBuf> {
+        if let CenterPane::Editor(editor) = &self.center_pane {
+            let editor = editor.read(cx);
+            let buffer = editor.buffer.clone();
+
+            println!("Buf path: {:?}", buffer.read(cx).path.clone());
+
+            buffer.read(cx).path.clone()
+        } else {
+            None
+        }
     }
 
     fn set_bottom_bar(
@@ -230,7 +244,7 @@ impl EditorAPI<Workspace> for Workspace {
         }
     }
 
-    fn get_curosr_byte_offset(&mut self, cx: &mut Context<Workspace>) -> usize {
+    fn get_cursor_byte_offset(&mut self, cx: &mut Context<Workspace>) -> usize {
         if let CenterPane::Editor(editor) = &self.center_pane {
             let editor = editor.read(cx);
             let buffer = editor.buffer.clone();

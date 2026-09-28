@@ -16,7 +16,7 @@ pub struct Buffer {
     pub text: Rope,
     pub syntax: OrgSyntax,
     history: History,
-    path: Option<PathBuf>,
+    pub path: Option<PathBuf>,
 }
 
 impl Buffer {

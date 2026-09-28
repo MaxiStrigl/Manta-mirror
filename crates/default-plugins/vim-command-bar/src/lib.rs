@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use gpui::{
     AppContext, Context, EventEmitter, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, Render, Styled, Window, div, rgb,
@@ -16,6 +18,7 @@ pub struct VimCommandBar {
     pub focus_handle: FocusHandle,
     pub input_text: String,
     pub available_commands: Vec<CommandInfo>,
+    pub workspace_dir: Option<PathBuf>,
 }
 
 impl VimCommandBar {
@@ -47,6 +50,7 @@ impl VimCommandBar {
             focus_handle: cx.focus_handle(),
             input_text: String::new(),
             available_commands: Vec::new(),
+            workspace_dir: None,
         }
     }
 
@@ -117,7 +121,7 @@ impl Render for VimCommandBar {
                         .text_color(rgb(0xffffff))
                         .flex()
                         .px_2()
-                        .child(format!("Normal | 140 | Some_file.txt")),
+                        .child(format!("Normal | 140 | {}", &self.workspace_dir.clone().map_or("~".to_string(), |p| p.to_string_lossy().to_string()))),
                 );
             }
             BarState::Command => {
@@ -155,38 +159,61 @@ impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for VimCommandBarPlugin {
     }
 
     fn on_load(&self, api: &mut dyn manta_api::EditorAPI<T>, cx: &mut Context<T>) {
-        let bar = cx.new(|cx| VimCommandBar::new(cx));
+        let path = api.get_buffer_path(cx);
+        let bar = cx.new(|cx| {
+            let mut bar = VimCommandBar::new(cx);
+            bar.workspace_dir = path;
+            bar
+        });
         api.set_bottom_bar(Some(bar.clone().into()), None, cx);
+        
 
         cx.subscribe(&bar, |workspace: &mut T, view, command_id, cx| {
             workspace.set_bottom_bar(Some(view.clone().into()), None, cx);
-
+            
             view.update(cx, |bar, cx| {
                 bar.state = BarState::Status;
                 bar.input_text.clear();
                 cx.notify();
             });
-
+            
             workspace.focus_main_panel(cx);
-
+            
             if command_id != "core:abort" {
                 let _ = workspace.execute_command(command_id, cx);
             }
         })
         .detach();
 
-        api.register_command(
-            "command-bar:open",
-            "Open Command Bar",
-            Box::new(move |api, cx| {
-                let handle = bar.read(cx).focus_handle.clone();
-                bar.update(cx, |bar, cx| {
+    let bar_clone = bar.clone();
+    
+    api.register_command(
+        "command-bar:open",
+        "Open Command Bar",
+        Box::new(move |api, cx| {
+            let handle = bar.read(cx).focus_handle.clone();
+            bar.update(cx, |bar, cx| {
                     bar.set_commands(api.get_available_commands());
                     bar.state = BarState::Command;
                     cx.notify();
                 });
 
                 api.set_bottom_bar(Some(bar.clone().into()), Some(handle), cx);
+            }),
+        );
+
+    api.register_command(
+        "command-bar:update",
+        "Update Command Bar",
+        Box::new(move |api, cx| {
+            let path = api.get_buffer_path(cx);
+            let handle = bar_clone.read(cx).focus_handle.clone();
+            bar_clone.update(cx, |bar, cx| {
+                    bar.workspace_dir = path;
+                    cx.notify();
+                });
+
+                api.set_bottom_bar(Some(bar_clone.clone().into()), Some(handle), cx);
             }),
         );
     }
