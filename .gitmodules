@@ -1,4 +1,3 @@
-[submodule "vendor/tree-sitter-org"]
+[submodule "crates/manta-core/vendor/tree-sitter-org"]
 	path = crates/manta-core/vendor/tree-sitter-org
 	url = https://github.com/nvim-orgmode/tree-sitter-org
-  branch = next
