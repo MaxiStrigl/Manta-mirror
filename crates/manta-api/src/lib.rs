@@ -65,4 +65,5 @@ pub trait EditorAPI<T> {
     fn workspace_dir(&self) -> PathBuf;
     fn get_available_commands(&self) -> Vec<CommandInfo>;
     fn get_buffer_path(&self, cx: &mut Context<T>) -> Option<PathBuf>;
+    fn get_insert_mode_status(&self, cx: &mut Context<T>) -> bool;
 }

@@ -182,6 +182,15 @@ impl EditorAPI<Workspace> for Workspace {
         }
     }
 
+    fn get_insert_mode_status(&self, cx: &mut Context<Workspace>) -> bool {
+        if let CenterPane::Editor(editor) = &self.center_pane {
+            let editor = editor.read(cx);
+            editor.is_insert_mode
+        } else {
+            false
+        }
+    }
+
     fn set_bottom_bar(
         &mut self,
         view: Option<AnyView>,
