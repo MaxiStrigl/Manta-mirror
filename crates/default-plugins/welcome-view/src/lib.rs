@@ -21,24 +21,29 @@ impl Render for WelcomView {
         window: &mut gpui::Window,
         cx: &mut gpui::prelude::Context<Self>,
     ) -> impl gpui::prelude::IntoElement {
+        let theme_color_bg = manta_config::CONFIG.theme.color_bg;
+        let theme_color_surface = manta_config::CONFIG.theme.color_surface;
+        let theme_color_text = manta_config::CONFIG.theme.color_text;
+
+
         div()
             .size_full()
             .flex()
             .flex_col()
             .items_center()
             .justify_center()
-            .bg(rgb(0x1e1e1e))
+            .bg(rgb(theme_color_bg))
             .track_focus(&self.focus_handle)
             .child(
                 div()
                     .text_xl()
-                    .text_color(rgb(0xafafaf))
+                    .text_color(rgb(theme_color_text))
                     .child("Welcome to Manta"),
             )
             .child(
                 div()
                     .p_2()
-                    .bg(rgb(0x333333))
+                    .bg(rgb(theme_color_surface))
                     .mt_4()
                     .child("Open File")
                     .id("open-file-btn")

@@ -7,3 +7,4 @@ edition.workspace = true
 gpui.workspace = true
 manta-api.workspace = true
 manta_components.workspace = true
+manta-config.workspace = true

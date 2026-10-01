@@ -174,8 +174,6 @@ impl EditorAPI<Workspace> for Workspace {
             let editor = editor.read(cx);
             let buffer = editor.buffer.clone();
 
-            println!("Buf path: {:?}", buffer.read(cx).path.clone());
-
             buffer.read(cx).path.clone()
         } else {
             None
@@ -346,7 +344,6 @@ impl Render for Workspace {
         if let Some(panel) = &self.active_panel {
             layout = layout.child(
                 div()
-                    .h_64()
                     .border_t_1()
                     .border_color(rgb(0x0000ff))
                     .child(panel.clone()),

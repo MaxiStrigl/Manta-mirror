@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use gpui::{Context, EventEmitter, FocusHandle, IntoElement, Window, div, rgb};
+use gpui::{Context, EventEmitter, FocusHandle, IntoElement, Window, div, px, rgb};
 use gpui::{KeyDownEvent, prelude::*};
 
 use manta_components::{FuzzySearch, FuzzySearchEvent};
@@ -32,29 +32,26 @@ impl FileFinder {
     pub fn new(cx: &mut Context<Self>, rootdir: PathBuf) -> FileFinder {
         let searcher = FuzzySearch::new(
             |entry: &FileEntry, is_selected: bool| {
+                let theme_color_bg = manta_config::CONFIG.theme.color_bg;
+                let theme_color_surface = manta_config::CONFIG.theme.color_surface;
+                let theme_color_text = manta_config::CONFIG.theme.color_text;
+
                 let display = if entry.is_dir {
                     format!("{}/", entry.name)
                 } else {
                     entry.name.clone()
                 };
 
-                let color = if is_selected {
-                    rgb(0xffffff)
-                } else if entry.is_dir {
-                    rgb(0x61afef)
-                } else {
-                    rgb(0xcccccc)
-                };
-
                 div()
                     .px_2()
                     .py_1()
+                    .line_height(px(26.0))
                     .bg(if is_selected {
-                        rgb(0x007acc)
+                        rgb(theme_color_surface)
                     } else {
-                        rgb(0x1e1e1e)
+                        rgb(theme_color_bg)
                     })
-                    .text_color(color)
+                    .text_color(rgb(theme_color_text))
                     .child(display)
                     .into_any_element()
             },
@@ -185,9 +182,12 @@ impl Render for FileFinder {
         div()
             .flex()
             .flex_col()
+            .max_h_64()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::handle_key_down))
-            .child(div().child(format!("Search File: {}", self.input_text)))
-            .child(self.searcher.render_list())
+            .children([
+                div().child(format!("Search File: {}", self.input_text)),
+                div().child(self.searcher.render_list())
+            ])
     }
 }
