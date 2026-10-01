@@ -406,7 +406,70 @@ impl VimEditor {
                         self.cursor_offset = offset + full_text.chars().count() + 1;
                     }
                 }
+                InsertTextAction::OpenLine(shape, dir, count) => {
+                    //TODO: Count doesn't work. For some reason is count always = 1
+                    let count = match count {
+                        Count::Contextual => ctx.get_count().unwrap_or(1),
+                        Count::Exact(n) => n,
+                        _ => 1,
+                    };
 
+                    match shape {
+                        TargetShape::CharWise => {
+                            println!("OpenLine shape CharWise not implemented")
+                        }
+                        TargetShape::LineWise => {
+                            let current_line_idx = text.char_to_line(self.cursor_offset);
+                            let current_line_start = text.line_to_char(current_line_idx);
+                            let mut cursor_pad: usize = 0;
+
+                            let insert_offset = match dir {
+                                MoveDir1D::Previous => current_line_start,
+                                MoveDir1D::Next => {
+                                    if current_line_idx + 1 < text.len_lines() {
+                                        text.line_to_char(current_line_idx + 1)
+                                    } else {
+                                        cursor_pad = 1;
+                                        text.len_chars()
+                                    }
+                                }
+                            };
+
+                            self.buffer.update(cx, |buf, cx| {
+                                let old_lines = buf.text.len_lines();
+                                println!("Line {:?}", buf.text.to_string());
+                                let insert_str = "\n".repeat(count);
+                                buf.insert(insert_offset, &insert_str);
+                                println!("Line {:?}", buf.text.to_string());
+
+                                let new_lines = buf.text.len_lines();
+
+                                dbg!(old_lines);
+                                dbg!(new_lines);
+
+                                if new_lines > old_lines {
+                                    let row = match dir {
+                                        MoveDir1D::Previous => current_line_idx,
+                                        MoveDir1D::Next => current_line_idx,
+                                    };
+                                    cx.emit(BufferEvent::LinesInserted {
+                                        row,
+                                        line_delta: new_lines - old_lines,
+                                    });
+                                }
+                            });
+
+                            self.cursor_offset = match dir {
+                                MoveDir1D::Previous => insert_offset,
+                                MoveDir1D::Next => insert_offset + cursor_pad,
+                            };
+                            self.target_col = 0;
+                        }
+                        TargetShape::BlockWise => {
+                            println!("OpenLine shape Blockwise not implemented")
+                        }
+                    }
+                }
                 _ => {
                     println!("Unhandled InsertTextAction: {:?}", insert_action);
                 }
