@@ -16,7 +16,7 @@ pub struct Buffer {
     pub text: Rope,
     pub syntax: OrgSyntax,
     history: History,
-    path: Option<PathBuf>,
+    pub path: Option<PathBuf>,
 }
 
 impl Buffer {
@@ -39,12 +39,16 @@ impl Buffer {
         let history = History::new();
         let syntax = OrgSyntax::new();
 
-        Ok(Self {
+        let mut new_buffer = Self {
             text,
             syntax,
             history,
             path: Some(path.as_ref().to_path_buf()),
-        })
+        };
+
+        new_buffer.syntax.parse_rope(&new_buffer.text);
+
+        Ok(new_buffer)
     }
 
     pub fn save(&mut self) -> Result<(), std::io::Error> {

@@ -37,7 +37,7 @@ pub struct VimEditor {
     line_map: Vec<usize>,
 
     cursor_visible: bool,
-    is_insert_mode: bool,
+    pub is_insert_mode: bool,
     _blink_task: Task<()>,
     target_col: usize,
     last_activity: Instant,
@@ -260,7 +260,15 @@ impl VimEditor {
             self.execute_action(action, context, cx);
         }
 
+        let old_insert_mode = self.is_insert_mode;
         self.is_insert_mode = self.vim_machine.mode() == VimMode::Insert;
+
+        if old_insert_mode != self.is_insert_mode {
+            cx.emit(EditorEvent::ExecuteCommand(
+                "command-bar:update".to_string(),
+            ));
+        }
+
         self.clamp_cursor(cx);
 
         let new_line_idx = self.buffer.read(cx).text.char_to_line(self.cursor_offset);
