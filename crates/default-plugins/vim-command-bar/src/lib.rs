@@ -2,10 +2,11 @@ use std::path::PathBuf;
 
 use gpui::{
     AppContext, Context, EventEmitter, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, Render, Styled, Window, div, rgb,
+    ParentElement, Render, Styled, Window, div, px, rgb,
 };
 use manta_api::{CommandInfo, EditorAPI, MantaPlugin};
 use manta_components::{FuzzySearch, FuzzySearchEvent};
+use manta_config;
 
 pub enum BarState {
     Status,
@@ -24,21 +25,27 @@ pub struct VimCommandBar {
 
 impl VimCommandBar {
     pub fn new(cx: &mut Context<Self>) -> Self {
+
         let searcher = FuzzySearch::new(
             |command: &CommandInfo, is_slected: bool| {
+                let theme_color_bg = manta_config::CONFIG.theme.color_bg;
+                let theme_color_surface = manta_config::CONFIG.theme.color_surface;
+                let theme_color_text = manta_config::CONFIG.theme.color_text;
+
                 let display = command.name.clone();
 
                 let bg = if is_slected {
-                    rgb(0xff0000)
+                    rgb(theme_color_surface)
                 } else {
-                    rgb(0x00ff00)
+                    rgb(theme_color_bg)
                 };
 
                 div()
                     .px_2()
                     .py_1()
+                    .line_height(px(26.0))
                     .bg(bg)
-                    .text_color(rgb(0xffffff))
+                    .text_color(rgb(theme_color_text))
                     .child(display)
                     .into_any_element()
             },
@@ -107,6 +114,11 @@ impl EventEmitter<String> for VimCommandBar {}
 
 impl Render for VimCommandBar {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme_color_bg = manta_config::CONFIG.theme.color_bg;
+        let theme_color_surface = manta_config::CONFIG.theme.color_surface;
+        let theme_color_text = manta_config::CONFIG.theme.color_text;
+        let theme_color_border = manta_config::CONFIG.theme.color_border;
+
         let mut layout = div()
             .w_full()
             .flex()
@@ -119,12 +131,14 @@ impl Render for VimCommandBar {
                 layout = layout.child(
                     div()
                         .h_8()
-                        .bg(rgb(0x111111))
-                        .text_color(rgb(0xffffff))
+                        .bg(rgb(theme_color_surface))
+                        .text_color(rgb(theme_color_text))
+                        .border_t_1()
+                        .border_color(rgb(theme_color_border))
                         .flex()
                         .px_2()
                         .child(format!(
-                            "{} | 140 | {}",
+                            "{} | {}",
                             if self.is_insert_mode.clone() {
                                 "Insert"
                             } else {
@@ -141,20 +155,21 @@ impl Render for VimCommandBar {
                 layout = layout
                     .child(
                         div()
-                            .bottom_full()
                             .w_full()
                             .max_h_64()
-                            .bg(rgb(0x1a1a1a))
+                            .bg(rgb(theme_color_bg))
                             .border_t_1()
-                            .border_color(rgb(0x333333))
+                            .border_color(rgb(theme_color_border))
                             .child(self.searcher.render_list()),
                     )
                     .child(
                         div()
                             .h_8()
                             .w_full()
-                            .bg(rgb(0x111111))
-                            .text_color(rgb(0xffffff))
+                            .bg(rgb(theme_color_surface))
+                            .border_t_1()
+                            .border_color(rgb(theme_color_border))
+                            .text_color(rgb(theme_color_text))
                             .child(format!(":{}", self.input_text)),
                     )
             }

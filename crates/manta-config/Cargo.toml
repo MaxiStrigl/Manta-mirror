@@ -1,0 +1,9 @@
+[package]
+name = "manta-config"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+config.workspace = true
+directories.workspace = true
+serde.workspace = true

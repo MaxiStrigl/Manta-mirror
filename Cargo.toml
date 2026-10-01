@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cli", "crates/default-plugins/file-finder", "crates/default-plugins/typst", "crates/default-plugins/vim-command-bar", "crates/default-plugins/welcome-view", "crates/manta-api", "crates/manta-core", "crates/manta-gui", "crates/manta_components"]
+members = ["crates/cli", "crates/default-plugins/file-finder", "crates/default-plugins/typst", "crates/default-plugins/vim-command-bar", "crates/default-plugins/welcome-view", "crates/manta-api", "crates/manta-config", "crates/manta-core", "crates/manta-gui", "crates/manta_components"]
 resolver = "3"
 
 [workspace.package]
@@ -14,11 +14,15 @@ nucleo = "0.5.0"
 ropey = "1.6.1"
 tree-sitter = "0.26.12"
 walkdir = "2.5.0"
+config = { version = "0.15.27", default-features = false, features = ["toml"] }
+directories = "6.0.0"
+serde = { version = "1.0.229", features = ["derive"] }
 cc = "1.0"
 manta_components = { path = "./crates/manta_components/"}
 manta-core = {path = "./crates/manta-core/"}
 manta-gui = { path = "./crates/manta-gui/" }
 manta-api = { path = "./crates/manta-api/"}
+manta-config = { path = "./crates/manta-config/" }
 
 file-finder = {path = "./crates/default-plugins/file-finder/"}
 vim-command-bar = {path = "./crates/default-plugins/vim-command-bar/"}

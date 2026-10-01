@@ -105,12 +105,12 @@ impl<T: 'static + Clone> FuzzySearch<T> {
     }
 
     pub fn render_list(&mut self) -> impl IntoElement {
-        let mut list = div().flex().flex_col().overflow_y_hidden();
-        for (idx, element) in self.results.iter().enumerate() {
+        let list = div().flex().flex_col().overflow_y_hidden();
+        let flattened_list = self.results.iter().enumerate().map(|(idx, element)| {
             let is_selected = idx == self.selected_index;
-            list = list.child((self.render_item)(element, is_selected));
-        }
+            (self.render_item)(element, is_selected)
+        });
 
-        list
+        list.children(flattened_list)
     }
 }
