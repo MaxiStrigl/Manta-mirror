@@ -3,3 +3,9 @@ color_bg = 0x121212
 color_surface = 0x242424
 color_text = 0xFAFAFA
 color_border = 0x363636
+
+color_mode_normal = 0x449911
+color_mode_insert = 0xBB55EE
+
+[editor_settings]
+font_size = 16.0

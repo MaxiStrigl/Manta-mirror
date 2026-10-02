@@ -3270,6 +3270,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "manta-api",
+ "manta-config",
  "manta-core",
  "modalkit",
 ]

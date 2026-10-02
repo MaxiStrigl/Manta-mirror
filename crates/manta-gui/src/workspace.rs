@@ -262,6 +262,35 @@ impl EditorAPI<Workspace> for Workspace {
         }
     }
 
+    fn get_cursor_char_position(&mut self, cx: &mut Context<Workspace>) -> Option<usize> {
+        if let CenterPane::Editor(editor) = &self.center_pane {
+            let editor = editor.read(cx);
+            let buffer = editor.buffer.clone();
+            let text = &buffer.read(cx).text;
+
+            let line_number = text.char_to_line(editor.cursor_offset);
+            let chars_to_line = text.line_to_char(line_number);
+
+            return Some(editor.cursor_offset - chars_to_line)
+        }
+
+        None
+    }
+    
+    fn get_cursor_line_position(&mut self, cx: &mut Context<Workspace>) -> Option<usize> {
+        if let CenterPane::Editor(editor) = &self.center_pane {
+            let editor = editor.read(cx);
+            let buffer = editor.buffer.clone();
+            let text = &buffer.read(cx).text;
+
+            let line_number = text.char_to_line(editor.cursor_offset);
+
+            return Some(line_number)
+        }
+
+        None
+    }
+
     fn get_buffer_text(&mut self, cx: &mut Context<Workspace>) -> String {
         if let CenterPane::Editor(editor) = &self.center_pane {
             let editor = editor.read(cx);

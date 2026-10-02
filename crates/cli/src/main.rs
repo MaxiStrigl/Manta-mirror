@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{borrow::Cow, path::PathBuf};
 
 use file_finder::FileFinderPlugin;
 use gpui::*;
@@ -31,6 +31,9 @@ fn main() {
     let app = Application::new();
 
     app.run(|cx: &mut App| {
+        cx.text_system()
+            .add_fonts(vec![Cow::Borrowed(include_bytes!("../assets/fonts/NotoSans.ttf"))]).expect("Failed to load font");
+
         let options = WindowOptions {
             ..Default::default()
         };

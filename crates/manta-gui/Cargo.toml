@@ -8,3 +8,4 @@ modalkit.workspace = true
 gpui.workspace = true
 manta-core.workspace = true
 manta-api.workspace = true
+manta-config.workspace = true
