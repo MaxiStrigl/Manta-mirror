@@ -55,7 +55,6 @@ impl Workspace {
 
         cx.subscribe(&editor, |this, _, event, cx| match event {
             EditorEvent::ExecuteCommand(name) => {
-                println!("Editor command");
                 let _ = this.execute_command(name, cx);
             }
         })
@@ -144,7 +143,6 @@ impl EditorAPI<Workspace> for Workspace {
 
         cx.subscribe(&new_editor, |this, _, event, cx| match event {
             EditorEvent::ExecuteCommand(name) => {
-                println!("Editor command");
                 let _ = this.execute_command(name, cx);
             }
         })
@@ -271,12 +269,12 @@ impl EditorAPI<Workspace> for Workspace {
             let line_number = text.char_to_line(editor.cursor_offset);
             let chars_to_line = text.line_to_char(line_number);
 
-            return Some(editor.cursor_offset - chars_to_line)
+            return Some(editor.cursor_offset - chars_to_line);
         }
 
         None
     }
-    
+
     fn get_cursor_line_position(&mut self, cx: &mut Context<Workspace>) -> Option<usize> {
         if let CenterPane::Editor(editor) = &self.center_pane {
             let editor = editor.read(cx);
@@ -285,7 +283,7 @@ impl EditorAPI<Workspace> for Workspace {
 
             let line_number = text.char_to_line(editor.cursor_offset);
 
-            return Some(line_number)
+            return Some(line_number);
         }
 
         None
@@ -340,7 +338,6 @@ impl EditorAPI<Workspace> for Workspace {
 
         cx.subscribe(&pane, |this, _, event, cx| match event {
             EditorEvent::ExecuteCommand(name) => {
-                println!("Editor command");
                 let _ = this.execute_command(name, cx);
             }
         })

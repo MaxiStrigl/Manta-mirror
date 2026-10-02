@@ -434,15 +434,10 @@ impl VimEditor {
 
                             self.buffer.update(cx, |buf, cx| {
                                 let old_lines = buf.text.len_lines();
-                                println!("Line {:?}", buf.text.to_string());
                                 let insert_str = "\n".repeat(count);
                                 buf.insert(insert_offset, &insert_str);
-                                println!("Line {:?}", buf.text.to_string());
 
                                 let new_lines = buf.text.len_lines();
-
-                                dbg!(old_lines);
-                                dbg!(new_lines);
 
                                 if new_lines > old_lines {
                                     let row = match dir {
@@ -914,8 +909,6 @@ impl Render for VimEditor {
                     .map(|virtual_index| {
                         let line_idx = line_map[virtual_index];
 
-                        dbg!(&line_map);
-                        dbg!(text.lines());
                         let line = text.line(line_idx);
                         let line_start_char = text.line_to_char(line_idx);
                         let line_start_byte = text.line_to_byte(line_idx);
