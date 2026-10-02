@@ -2,7 +2,7 @@
 
 ## Roadmap, Todos & Planned Features
 ### Bugs/Issues
-- [ ] **Undo/Redo can crash the app**
+- [X] **Undo/Redo can crash the app**
 - [ ] Welcome View is a placeholder
 - [ ] Buffer::end_transaction is a no-op. Remove it
 - [ ] Outdated treesitter grammar. Using nvim-orgmodes grammar should be better. Possibly via "https://crates.io/crates/treesitter-types"
@@ -38,7 +38,7 @@
   - [ ] Current cursor position
   - [ ] Current mode (needs visual mode)
   - [ ] Make it more modular. Allow the user to place elements (center/left/right) via config.
-  - [ ] Allow injection of views as modules
+  - [ ] Allow injection of views as modules or just text insertions?
   - [ ] Remove command bar and make it a plugin. Maybe rename it then to manta-bar?
 
 - [ ] FileFinder
@@ -72,6 +72,7 @@
   - [ ] Default Workspace directory (without arguments manta starts from there)
 
 - [ ] Editor Commands where mutliple listeners can register (e.g. reload config, file-opened)
+- [ ] Editor Commands with parameters (cursor_moved current_position)
 - [ ] Continuous implementation of vim binds
 - [ ] Continuous implementation of .org/(later markdown) elements
 - [ ] Editor splits (mutliple files open)/Tabs? (Niri like infinte horizontal band?)

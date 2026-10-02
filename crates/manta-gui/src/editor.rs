@@ -720,6 +720,8 @@ impl VimEditor {
                             }
                         });
                     }
+
+                    self.rebuild_line_map(cx);
                 }
 
                 HistoryAction::Undo(count) => {
@@ -736,6 +738,8 @@ impl VimEditor {
                             }
                         });
                     }
+
+                    self.rebuild_line_map(cx);
                 }
             },
             _ => {
@@ -913,6 +917,8 @@ impl Render for VimEditor {
                     .map(|virtual_index| {
                         let line_idx = line_map[virtual_index];
 
+                        dbg!(&line_map);
+                        dbg!(text.lines());
                         let line = text.line(line_idx);
                         let line_start_char = text.line_to_char(line_idx);
                         let line_start_byte = text.line_to_byte(line_idx);
