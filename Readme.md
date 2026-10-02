@@ -35,7 +35,7 @@
   - [ ] Add keybinds
 
 - [ ] Vim bar plugin
-  - [ ] Current cursor position
+  - [X] Current cursor position
   - [ ] Current mode (needs visual mode)
   - [ ] Make it more modular. Allow the user to place elements (center/left/right) via config.
   - [ ] Allow injection of views as modules or just text insertions?

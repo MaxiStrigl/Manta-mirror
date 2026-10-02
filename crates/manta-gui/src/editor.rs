@@ -260,14 +260,7 @@ impl VimEditor {
             self.execute_action(action, context, cx);
         }
 
-        let old_insert_mode = self.is_insert_mode;
         self.is_insert_mode = self.vim_machine.mode() == VimMode::Insert;
-
-        if old_insert_mode != self.is_insert_mode {
-            cx.emit(EditorEvent::ExecuteCommand(
-                "command-bar:update".to_string(),
-            ));
-        }
 
         self.clamp_cursor(cx);
 
@@ -280,6 +273,10 @@ impl VimEditor {
 
         self.scroll_handle.scroll_to_item(new_line_idx, strategy);
         self.last_activity = Instant::now();
+
+        cx.emit(EditorEvent::ExecuteCommand(
+            "command-bar:update".to_string(),
+        ));
 
         cx.notify();
     }
@@ -1115,7 +1112,7 @@ impl Render for VimEditor {
             .flex_col()
             .size_full()
             .bg(rgb(0x1e1e1e))
-            .text_sm()
+            .text_size(px(manta_config::CONFIG.editor_settings.font_size))
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::handle_key_down))
             .child(

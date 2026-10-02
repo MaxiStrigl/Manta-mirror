@@ -52,6 +52,8 @@ pub trait EditorAPI<T> {
     fn remove_inline_replacement(&mut self, id: usize, cx: &mut Context<T>);
 
     fn get_cursor_byte_offset(&mut self, cx: &mut Context<T>) -> usize;
+    fn get_cursor_char_position(&mut self, cx: &mut Context<T>) -> Option<usize>;
+    fn get_cursor_line_position(&mut self, cx: &mut Context<T>) -> Option<usize>;
     fn get_buffer_text(&mut self, cx: &mut Context<T>) -> String;
     fn get_replacement_at_byte(
         &self,

@@ -1,8 +1,7 @@
 use std::path::PathBuf;
 
 use gpui::{
-    AppContext, Context, EventEmitter, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, Render, Styled, Window, div, px, rgb,
+    AppContext, Context, EventEmitter, FocusHandle, FontWeight, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, Styled, Window, div, px, rgb,
 };
 use manta_api::{CommandInfo, EditorAPI, MantaPlugin};
 use manta_components::{FuzzySearch, FuzzySearchEvent};
@@ -21,6 +20,7 @@ pub struct VimCommandBar {
     pub available_commands: Vec<CommandInfo>,
     pub workspace_dir: Option<PathBuf>,
     pub is_insert_mode: bool,
+    pub cursor_position: Option<(usize, usize)>,
 }
 
 impl VimCommandBar {
@@ -60,6 +60,7 @@ impl VimCommandBar {
             available_commands: Vec::new(),
             workspace_dir: None,
             is_insert_mode: false,
+            cursor_position: None,
         }
     }
 
@@ -136,19 +137,54 @@ impl Render for VimCommandBar {
                         .border_t_1()
                         .border_color(rgb(theme_color_border))
                         .flex()
-                        .px_2()
-                        .child(format!(
-                            "{} | {}",
-                            if self.is_insert_mode.clone() {
-                                "Insert"
-                            } else {
-                                "Normal"
-                            },
-                            &self
-                                .workspace_dir
-                                .clone()
-                                .map_or("~".to_string(), |p| p.to_string_lossy().to_string())
-                        )),
+                        .child(
+                            div().children([
+                                div().child(format!(
+                                    "{}",
+                                    if self.is_insert_mode.clone() {
+                                        "Insert"
+                                    } else {
+                                        "Normal"
+                                    }
+                                ))
+                                .bg(if self.is_insert_mode.clone() {
+                                        rgb(manta_config::CONFIG.theme.color_mode_insert)
+                                    } else {
+                                        rgb(manta_config::CONFIG.theme.color_mode_normal)
+                                    })
+                                .font_family("Noto Sans")
+                                .line_height(px(28.0))
+                                .text_size(px(16.0))
+                                .font_weight(FontWeight::BOLD)
+                                .px_2()
+                                .w_24()
+                                .text_align(gpui::TextAlign::Center),
+                                div().child(
+                                if let Some((line_index, cursor_offset)) = &self.cursor_position {
+                                    format!(
+                                        "{}:{}",
+                                        line_index, cursor_offset
+                                    )
+                                } else { "".to_string() })
+                                .line_height(px(32.0))
+                                .text_size(px(16.0))
+                                .border_r_1()
+                                .border_color(rgb(manta_config::CONFIG.theme.color_border))
+                                .px_2(),
+                                div().child(format!(
+                                    "{}",
+                                    &self
+                                    .workspace_dir
+                                    .clone()
+                                    .map_or("~".to_string(), |p| p.to_string_lossy().to_string())
+                                ))
+                                .line_height(px(32.0))
+                                .text_size(px(16.0))
+                                .px_2(),
+                            ])
+                            .flex()
+                            .flex_row()
+                    )
                 );
             }
             BarState::Command => {
@@ -235,9 +271,12 @@ impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for VimCommandBarPlugin {
             Box::new(move |api, cx| {
                 let path = api.get_buffer_path(cx);
                 let insert_mode_status = api.get_insert_mode_status(cx);
+                let cursor_offset = api.get_cursor_char_position(cx);
+                let line_position = api.get_cursor_line_position(cx);
                 bar_clone.update(cx, |bar, cx| {
                     bar.workspace_dir = path;
                     bar.is_insert_mode = insert_mode_status;
+                    bar.cursor_position = line_position.zip(cursor_offset);
                     cx.notify();
                 });
             }),

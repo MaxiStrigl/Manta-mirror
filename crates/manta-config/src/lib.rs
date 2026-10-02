@@ -8,6 +8,7 @@ const DEFAULT_CONFIG: &str = include_str!("../default.toml");
 #[derive(Debug, Deserialize)]
 pub struct MantaConfig {
     pub theme: Theme,
+    pub editor_settings: EditorSettings,
 }
 
 #[derive(Debug, Deserialize)]
@@ -15,7 +16,15 @@ pub struct Theme {
     pub color_bg: u32,
     pub color_surface: u32,
     pub color_text: u32,
-    pub color_border: u32
+    pub color_border: u32,
+
+    pub color_mode_normal: u32,
+    pub color_mode_insert: u32
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EditorSettings {
+    pub font_size: f32,
 }
 
 fn user_config_path() -> Option<PathBuf> {
