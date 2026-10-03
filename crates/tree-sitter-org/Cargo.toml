@@ -1,0 +1,6 @@
+[package]
+name = "tree-sitter-org"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
