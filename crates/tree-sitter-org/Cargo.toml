@@ -4,3 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+tree-sitter.workspace = true
+treesitter-types.workspace = true
+
+[build-dependencies]
+treesitter-types.workspace = true
+cc.workspace = true

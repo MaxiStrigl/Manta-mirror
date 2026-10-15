@@ -507,7 +507,7 @@ dependencies = [
  "clang-sys",
  "itertools 0.13.0",
  "log",
- "prettyplease",
+ "prettyplease 0.2.37",
  "proc-macro2",
  "quote",
  "regex",
@@ -3262,6 +3262,7 @@ dependencies = [
  "cc",
  "ropey",
  "tree-sitter",
+ "tree-sitter-org",
 ]
 
 [[package]]
@@ -4108,6 +4109,16 @@ checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "prettyplease"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bfe0f4c752e450fc2faf62654f1c134747922825d5b04ca717b8874f41a40c0"
+dependencies = [
+ "proc-macro2",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -6017,6 +6028,28 @@ checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
 [[package]]
 name = "tree-sitter-org"
 version = "0.1.0"
+dependencies = [
+ "cc",
+ "tree-sitter",
+ "treesitter-types",
+]
+
+[[package]]
+name = "treesitter-types"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de191b3f602f6d2d652a313c20ced12abffb8b6f9c80af9370dd38775a59bef5"
+dependencies = [
+ "prettyplease 0.3.0",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "stacker",
+ "syn 3.0.3",
+ "thiserror 2.0.19",
+ "tree-sitter",
+]
 
 [[package]]
 name = "try-lock"

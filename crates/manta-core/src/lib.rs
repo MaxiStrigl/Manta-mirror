@@ -1,3 +1,4 @@
 pub mod buffer;
 pub mod history;
-pub mod syntax;
+pub mod language;
+// pub mod syntax;

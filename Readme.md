@@ -5,7 +5,7 @@
 - [X] **Undo/Redo can crash the app**
 - [ ] Welcome View is a placeholder
 - [ ] Buffer::end_transaction is a no-op. Remove it
-- [ ] Outdated treesitter grammar. Using nvim-orgmodes grammar should be better. Possibly via "https://crates.io/crates/treesitter-types"
+- [x] Outdated treesitter grammar. Using nvim-orgmodes grammar should be better. Possibly via "https://crates.io/crates/treesitter-types"
 - [ ] No soft line breaks
 
 ### Roadmap

@@ -1,7 +1,7 @@
 fn main() {
     let src_dir = std::path::Path::new("vendor/tree-sitter-org/src");
 
-    println!("cargo:rerun-if-changed={}", src_dir.display());
+    // println!("cargo:rerun-if-changed={}", src_dir.display());
 
     cc::Build::new()
         .include(src_dir)

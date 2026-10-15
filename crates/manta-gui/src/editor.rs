@@ -1,14 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::time::Instant;
 
 use gpui::*;
 use manta_api::InlineReplacement;
 use manta_core::buffer::Buffer;
-use modalkit::actions::{
-    Action, CommandAction, CommandBarAction, EditAction, EditorAction, HistoryAction,
-    InsertTextAction,
-};
+use manta_core::language::HeadingID;
+use modalkit::actions::{Action, EditAction, EditorAction, HistoryAction, InsertTextAction};
 use modalkit::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use modalkit::editing::context::EditContext;
 use modalkit::env::vim::VimMode;
@@ -31,9 +29,8 @@ impl EventEmitter<BufferEvent> for Buffer {}
 pub struct VimEditor {
     pub buffer: Entity<Buffer>,
     _buffer_subscription: Subscription,
-
     pub cursor_offset: usize,
-    folded_start_lines: Vec<usize>,
+    folded: HashSet<HeadingID>,
     line_map: Vec<usize>,
 
     cursor_visible: bool,
@@ -67,20 +64,33 @@ impl VimEditor {
         let _buffer_subscription = cx.subscribe(&buffer, |editor, _, event, cx| {
             match event {
                 BufferEvent::LinesInserted { row, line_delta } => {
-                    for fold_start in editor.folded_start_lines.iter_mut() {
-                        if *fold_start >= *row {
-                            *fold_start += line_delta;
-                        }
-                    }
-
+                    editor.folded = editor
+                        .folded
+                        .drain()
+                        .map(|fold| {
+                            if fold.0 >= *row {
+                                HeadingID(fold.0 + *line_delta)
+                            } else {
+                                fold
+                            }
+                        })
+                        .collect::<HashSet<_>>();
                     editor.rebuild_line_map(cx);
                 }
+
                 BufferEvent::LinesDeleted { row, line_delta } => {
-                    for fold_start in editor.folded_start_lines.iter_mut() {
-                        if *fold_start >= *row {
-                            *fold_start -= line_delta;
-                        }
-                    }
+                    editor.folded = editor
+                        .folded
+                        .drain()
+                        .map(|fold| {
+                            if fold.0 >= *row {
+                                HeadingID(fold.0 - *line_delta)
+                            } else {
+                                fold
+                            }
+                        })
+                        .collect::<HashSet<_>>();
+
                     editor.rebuild_line_map(cx);
                 }
             }
@@ -88,7 +98,7 @@ impl VimEditor {
         });
 
         let vim_machine = default_vim_keys();
-        let folded_start_lines = Vec::new();
+        let folded = HashSet::new();
         let line_map = Vec::new();
 
         let _blink_task = cx.spawn(async move |this, cx| {
@@ -151,7 +161,7 @@ impl VimEditor {
             is_insert_mode: false,
             _blink_task,
             line_map,
-            folded_start_lines,
+            folded,
             replacements: HashMap::new(),
             next_replacement_id: 0,
         };
@@ -163,47 +173,22 @@ impl VimEditor {
     fn rebuild_line_map(&mut self, cx: &mut Context<Self>) {
         self.line_map.clear();
         let buffer = self.buffer.read(cx);
-        let total_lines = buffer.text.len_lines();
+        let line_count = buffer.text.len_lines();
+        let mut spans: Vec<Range<usize>> = self
+            .folded
+            .iter()
+            .filter_map(|id| {
+                let span = buffer.syntax.fold_lines(*id);
+                dbg!(&span);
+                span
+            })
+            .map(|r| r.start + 1..r.end)
+            .collect();
+        spans.sort_by_key(|k| k.start);
 
-        let mut folded_ranges = Vec::new();
-
-        if let Some(tree) = &buffer.syntax.tree {
-            for &start_line in &self.folded_start_lines {
-                let byte_offset = buffer.text.line_to_byte(start_line);
-                let mut node = tree
-                    .root_node()
-                    .descendant_for_byte_range(byte_offset, byte_offset);
-
-                while let Some(n) = node {
-                    if n.kind() == "section" {
-                        let mut cursor = n.walk();
-                        let mut fold_start = n.start_position().row;
-
-                        // Keep headline visible
-                        for child in n.children(&mut cursor) {
-                            if child.kind() == "headline" {
-                                fold_start = child.end_position().row;
-                                break;
-                            }
-                        }
-
-                        let fold_end = n.end_position().row;
-
-                        if fold_start < fold_end {
-                            folded_ranges.push(fold_start..fold_end);
-                        }
-                        break;
-                    }
-                    node = n.parent();
-                }
-            }
-        }
-
-        folded_ranges.sort_by_key(|k| k.start);
-
-        // Remove Folds that are inside oter folds like ([]) -> () or ([)] -> (]
+        // Remove Folds that are inside other folds like ([]) -> () or ([)] -> (]
         let mut merged_folds: Vec<Range<usize>> = Vec::new();
-        for fold in &folded_ranges {
+        for fold in &spans {
             if let Some(last) = merged_folds.last_mut() {
                 if fold.start <= last.end {
                     last.end = last.end.max(fold.end);
@@ -212,15 +197,13 @@ impl VimEditor {
             }
             merged_folds.push(fold.clone());
         }
-
-        folded_ranges = merged_folds;
+        spans = merged_folds;
 
         let mut current_line = 0;
         let mut fold_idx = 0;
-
-        while current_line < total_lines {
-            if fold_idx < folded_ranges.len() && current_line == folded_ranges[fold_idx].start {
-                current_line = folded_ranges[fold_idx].end;
+        while current_line < line_count {
+            if fold_idx < spans.len() && current_line == spans[fold_idx].start {
+                current_line = spans[fold_idx].end;
                 fold_idx += 1;
             } else {
                 self.line_map.push(current_line);
@@ -354,7 +337,7 @@ impl VimEditor {
                     println!("Contextual Type action not implemented");
                 }
 
-                InsertTextAction::Transcribe(text, _dir, _count) => {
+                InsertTextAction::Transcribe(_text, _dir, _count) => {
                     println!("Transcribe Type action not implemented");
                 }
 
@@ -553,7 +536,7 @@ impl VimEditor {
                                 self.cursor_offset = line_start + non_blank_offset;
                                 self.target_col = non_blank_offset;
                             }
-                            MoveType::FirstWord(dir) => {
+                            MoveType::FirstWord(_) => {
                                 let multiplier = match count {
                                     Count::Exact(n) => n.saturating_sub(1),
                                     _ => 0,
@@ -706,7 +689,7 @@ impl VimEditor {
                     };
 
                     for _ in 0..multiplier {
-                        self.buffer.update(cx, |buf, cx| {
+                        self.buffer.update(cx, |buf, _cx| {
                             if let Some(offset) = buf.redo() {
                                 self.cursor_offset = offset;
                             }
@@ -724,7 +707,7 @@ impl VimEditor {
                     };
 
                     for _ in 0..multiplier {
-                        self.buffer.update(cx, |buf, cx| {
+                        self.buffer.update(cx, |buf, _cx| {
                             if let Some(offset) = buf.undo() {
                                 self.cursor_offset = offset;
                             }
@@ -840,49 +823,20 @@ impl VimEditor {
     }
 
     fn toggle_fold(&mut self, cx: &mut Context<Self>) {
-        let buffer = self.buffer.read(cx);
-        let byte_offset = buffer.text.char_to_byte(self.cursor_offset);
-
-        let tree = match &buffer.syntax.tree {
-            Some(t) => t,
-            None => return,
-        };
-
-        let mut node = tree
-            .root_node()
-            .descendant_for_byte_range(byte_offset, byte_offset);
-        let mut section_node = None;
-
-        // Find our section to collapse
-        while let Some(n) = node {
-            if n.kind() == "section" {
-                section_node = Some(n);
-                break;
+        let cursor_line = self.buffer.read(cx).text.char_to_line(self.cursor_offset);
+        let headline = self.buffer.read(cx).syntax.headline_at_line(cursor_line);
+        if let Some(headline) = headline {
+            if !self.folded.remove(&headline.id) {
+                self.folded.insert(headline.id);
             }
-            node = n.parent();
         }
-
-        if let Some(sec) = section_node {
-            let start_line = sec.start_position().row;
-
-            if let Some(pos) = self
-                .folded_start_lines
-                .iter()
-                .position(|l| l == &start_line)
-            {
-                self.folded_start_lines.remove(pos);
-            } else {
-                self.folded_start_lines.push(start_line);
-            }
-
-            self.rebuild_line_map(cx);
-            cx.notify();
-        }
+        self.rebuild_line_map(cx);
+        cx.notify();
     }
 }
 
 impl Focusable for VimEditor {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -925,23 +879,25 @@ impl Render for VimEditor {
 
                         let raw_syntax = buffer
                             .syntax
-                            .get_highlights(&line.to_string(), line_start_byte);
+                            .style_spans(&text, line_start_byte..line_end_byte);
 
                         let line_spans: Vec<StyleSpan> = raw_syntax
                             .iter()
                             .map(|span| {
                                 let mut style = TextStyle::default();
                                 match span.style {
-                                    manta_core::syntax::OrgToken::HeadlineStars
-                                    | manta_core::syntax::OrgToken::Headline => {
+                                    manta_core::language::OrgToken::HeadlineStars => {
+                                        style.color = rgb(0xff0000).into()
+                                    }
+                                    manta_core::language::OrgToken::Headline => {
                                         style.color = rgb(0x6f9cde).into()
                                     }
-                                    manta_core::syntax::OrgToken::Text => {}
+                                    manta_core::language::OrgToken::Text => {}
                                 }
 
                                 StyleSpan {
-                                    start_byte: line_start_byte + span.start_byte,
-                                    end_byte: line_start_byte + span.end_byte,
+                                    start_byte: line_start_byte + span.byte_range.start,
+                                    end_byte: line_start_byte + span.byte_range.end,
                                     style,
                                 }
                             })

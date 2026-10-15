@@ -5,6 +5,16 @@ pub struct BufferEdit {
     pub deleted_text: String,
 }
 
+impl BufferEdit {
+    fn inverse(&self) -> Self {
+        BufferEdit {
+            char_idx: self.char_idx,
+            inserted_text: self.deleted_text.clone(),
+            deleted_text: self.inserted_text.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct History {
     undo_stack: Vec<Vec<BufferEdit>>,
@@ -35,18 +45,15 @@ impl History {
 
     pub fn undo(&mut self) -> Option<Vec<BufferEdit>> {
         self.commit();
-        let edit = self.undo_stack.pop()?;
+        let batch = self.undo_stack.pop()?;
+        self.redo_stack.push(batch.clone());
 
-        self.redo_stack.push(edit.clone());
-
-        Some(edit)
+        Some(batch.iter().rev().map(|e| e.inverse()).collect())
     }
 
     pub fn redo(&mut self) -> Option<Vec<BufferEdit>> {
-        let edit = self.redo_stack.pop()?;
-
-        self.undo_stack.push(edit.clone());
-
-        Some(edit)
+        let batch = self.redo_stack.pop()?;
+        self.undo_stack.push(batch.clone());
+        Some(batch)
     }
 }

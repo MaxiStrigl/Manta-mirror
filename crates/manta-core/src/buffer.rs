@@ -9,46 +9,84 @@ use tree_sitter::InputEdit;
 
 use crate::{
     history::{BufferEdit, History},
-    syntax::OrgSyntax,
+    language::{self, LanguageService},
 };
 
 pub struct Buffer {
     pub text: Rope,
-    pub syntax: OrgSyntax,
+    pub syntax: Box<dyn LanguageService>,
     history: History,
     pub path: Option<PathBuf>,
 }
 
 impl Buffer {
     pub fn new() -> Buffer {
-        let text = Rope::new();
-        let history = History::new();
-        let syntax = OrgSyntax::new();
-
         Self {
-            text,
-            syntax,
-            history,
+            text: Rope::new(),
+            syntax: Box::new(language::org::OrgLanguageService::new()),
+            history: History::new(),
             path: None,
         }
     }
 
     pub fn from_file(path: impl AsRef<std::path::Path>) -> Result<Buffer, Error> {
-        let file = std::fs::File::open(&path)?;
-        let text = Rope::from_reader(file)?;
-        let history = History::new();
-        let syntax = OrgSyntax::new();
+        let mut buffer = Buffer::new();
 
-        let mut new_buffer = Self {
-            text,
-            syntax,
-            history,
-            path: Some(path.as_ref().to_path_buf()),
-        };
+        buffer.text = Rope::from_str(&std::fs::read_to_string(&path)?);
+        buffer.path = Some(path.as_ref().to_path_buf());
+        buffer.syntax.reload(&buffer.text);
 
-        new_buffer.syntax.parse_rope(&new_buffer.text);
+        Ok(buffer)
+    }
 
-        Ok(new_buffer)
+    /// One Atomic change
+    /// Record the edit in History and apply
+    pub fn edit(&mut self, edit: BufferEdit) {
+        self.history.push(edit.clone());
+        self.apply_edits(&[edit])
+    }
+
+    pub fn insert(&mut self, char_idx: usize, chunk: &str) {
+        self.edit(BufferEdit {
+            char_idx,
+            inserted_text: chunk.to_string(),
+            deleted_text: String::new(),
+        });
+    }
+
+    pub fn delete(&mut self, start_idx: usize, end_idx: usize) {
+        let deleted_text = self.text.slice(start_idx..end_idx).to_string();
+        self.edit(BufferEdit {
+            char_idx: start_idx,
+            inserted_text: String::new(),
+            deleted_text,
+        });
+    }
+
+    pub fn undo(&mut self) -> Option<usize> {
+        let batch = self.history.undo()?;
+        let offset = batch.last().map(|e| e.char_idx);
+        self.apply_edits(&batch);
+        offset
+    }
+
+    pub fn redo(&mut self) -> Option<usize> {
+        let batch = self.history.redo()?;
+        let cursor_offset = batch.last().map(|e| e.char_idx);
+        self.apply_edits(&batch);
+        cursor_offset
+    }
+
+    pub fn end_transaction(&mut self) {
+        self.history.commit();
+    }
+
+    fn apply_edits(&mut self, edits: &[BufferEdit]) {
+        let mut ts_edits = Vec::with_capacity(edits.len());
+        for edit in edits {
+            ts_edits.push(self.apply_edit_internal(edit));
+        }
+        self.syntax.on_edits(&ts_edits, &self.text);
     }
 
     pub fn save(&mut self) -> Result<(), std::io::Error> {
@@ -67,73 +105,9 @@ impl Buffer {
         }
     }
 
-    pub fn insert(&mut self, char_idx: usize, chunk: &str) {
-        let edit = BufferEdit {
-            char_idx: char_idx,
-            deleted_text: String::new(),
-            inserted_text: chunk.to_string(),
-        };
-
-        self.apply_edit_internal(&edit);
-
-        self.history.push(edit);
-    }
-
-    pub fn delete(&mut self, start_idx: usize, end_idx: usize) {
-        let deleted_text = self.text.slice(start_idx..end_idx).to_string();
-
-        let edit = BufferEdit {
-            char_idx: start_idx,
-            inserted_text: String::new(),
-            deleted_text,
-        };
-
-        self.apply_edit_internal(&edit);
-        self.history.push(edit);
-    }
-
-    pub fn undo(&mut self) -> Option<usize> {
-        let mut final_offset = None;
-
-        if let Some(mut edits) = self.history.undo() {
-            edits.reverse();
-            for edit in edits {
-                let inverted_edit = BufferEdit {
-                    char_idx: edit.char_idx,
-                    deleted_text: edit.inserted_text,
-                    inserted_text: edit.deleted_text,
-                };
-
-                self.apply_edit_internal(&inverted_edit);
-
-                final_offset = Some(edit.char_idx);
-            }
-        }
-
-        final_offset
-    }
-
-    pub fn end_transaction(&mut self) {
-        self.history.commit();
-    }
-
-    pub fn redo(&mut self) -> Option<usize> {
-        let mut final_offset = None;
-        if let Some(edits) = self.history.redo() {
-            for edit in edits {
-                self.apply_edit_internal(&edit);
-
-                final_offset = Some(edit.char_idx + edit.inserted_text.chars().count())
-            }
-        }
-
-        final_offset
-    }
-
-    fn apply_edit_internal(&mut self, edit: &BufferEdit) {
+    fn apply_edit_internal(&mut self, edit: &BufferEdit) -> InputEdit {
         let start_byte = self.text.char_to_byte(edit.char_idx);
         let start_position = rope_offset_to_point(&self.text, edit.char_idx);
-
         let old_end_byte = start_byte + edit.deleted_text.len();
         let old_end_position = rope_offset_to_point(
             &self.text,
@@ -155,20 +129,14 @@ impl Buffer {
             edit.char_idx + edit.inserted_text.chars().count(),
         );
 
-        let ts_edit = InputEdit {
+        InputEdit {
             start_byte,
             old_end_byte,
             new_end_byte,
             start_position,
             old_end_position,
             new_end_position,
-        };
-
-        if let Some(tree) = &mut self.syntax.tree {
-            tree.edit(&ts_edit);
         }
-
-        self.syntax.parse_rope(&self.text);
     }
 }
 
