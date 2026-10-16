@@ -204,100 +204,88 @@ impl LanguageService for OrgLanguageService {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use ropey::Rope;
-//
-//     #[test]
-//     fn test_outline_extration() {
-//         let content = "* Top level heading\nSome body text here.\n** subheading level 2\n*** One more subheading level 3\n* Second top level";
-//         let rope = Rope::from_str(content);
-//
-//         let mut service = OrgLanguageService::new();
-//         service.reparse(&rope);
-//
-//         let heading = service.outline();
-//
-//         assert_eq!(heading.len(), 4, "Should find exactly 4 headings");
-//
-//         assert_eq!(heading[0].level, 1);
-//         assert_eq!(heading[0].title, "Top level heading");
-//
-//         assert_eq!(heading[1].level, 2);
-//         assert_eq!(heading[1].title, "subheading level 2");
-//
-//         assert_eq!(heading[2].level, 3);
-//         assert_eq!(heading[2].title, "One more subheading level 3");
-//
-//         assert_eq!(heading[3].level, 1);
-//         assert_eq!(heading[3].title, "Second top level");
-//     }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ropey::Rope;
 
-//     #[test]
-//     fn test_fold_span_out_of_bounds() {
-//         let content = "* Some Headline";
-//         let rope = Rope::from_str(content);
-//
-//         let mut service = OrgLanguageService::new();
-//         service.reparse(&rope);
-//
-//         assert!(service.fold_span(99).is_none());
-//     }
-//
-//     #[test]
-//     fn test_fold_span() {
-//         let content =
-//             "* Section one\nBody text for section one.\nMore body.\n* Section Two\nBody of two";
-//         let rope = Rope::from_str(content);
-//         let mut service = OrgLanguageService::new();
-//         service.reparse(&rope);
-//
-//         let headings = service.outline();
-//         assert_eq!(headings.len(), 2);
-//
-//         let heading1_start = headings[0].span.start;
-//         let heading2_start = headings[1].span.start;
-//
-//         let fold_range_1 = service.fold_span(heading1_start);
-//         assert!(
-//             fold_range_1.is_some(),
-//             "Fold span for section 1 should exist"
-//         );
-//
-//         let range_1 = fold_range_1.unwrap();
-//         let folded_text_1 = rope.byte_slice(range_1).to_string();
-//
-//         assert!(
-//             folded_text_1.contains("* Section one"),
-//             "Should include the headline"
-//         );
-//         assert!(
-//             folded_text_1.contains("Body text for section one."),
-//             "Should include the section"
-//         );
-//         assert!(
-//             !folded_text_1.contains("* Section Two"),
-//             "Should not include the next section"
-//         );
-//
-//         let fold_range_2 = service.fold_span(heading2_start);
-//
-//         assert!(
-//             fold_range_2.is_some(),
-//             "Fold span for section 2 should exist"
-//         );
-//
-//         let range_2 = fold_range_2.unwrap();
-//         let folded_text_2 = rope.byte_slice(range_2).to_string();
-//
-//         assert!(
-//             folded_text_2.contains("* Section Two"),
-//             "Should include the headline"
-//         );
-//         assert!(
-//             folded_text_2.contains("Body of two"),
-//             "Should include the section"
-//         );
-//     }
-// }
+    #[test]
+    fn test_outline_extration() {
+        let content = "* Top level heading\nSome body text here.\n** subheading level 2\n*** One more subheading level 3\n* Second top level";
+        let rope = Rope::from_str(content);
+
+        let mut service = OrgLanguageService::new();
+        service.reparse(&rope);
+
+        let heading = service.outline();
+
+        assert_eq!(heading.len(), 4, "Should find exactly 4 headings");
+
+        assert_eq!(heading[0].level, 1);
+        assert_eq!(heading[0].title, "Top level heading");
+
+        assert_eq!(heading[1].level, 2);
+        assert_eq!(heading[1].title, "subheading level 2");
+
+        assert_eq!(heading[2].level, 3);
+        assert_eq!(heading[2].title, "One more subheading level 3");
+
+        assert_eq!(heading[3].level, 1);
+        assert_eq!(heading[3].title, "Second top level");
+    }
+
+    #[test]
+    fn test_fold_span_out_of_bounds() {
+        let content = "* Some Headline";
+        let rope = Rope::from_str(content);
+
+        let mut service = OrgLanguageService::new();
+        service.reparse(&rope);
+
+        assert!(service.fold_lines(HeadingID(99)).is_none());
+    }
+
+    #[test]
+    fn test_fold_span() {
+        let content =
+            "* Section one\nBody text for section one.\nMore body.\n* Section Two\nBody of two";
+        let rope = Rope::from_str(content);
+        let mut service = OrgLanguageService::new();
+        service.reparse(&rope);
+
+        let headings = service.outline();
+        assert_eq!(headings.len(), 2);
+
+        let heading1_start = headings[0].span.start;
+        let heading2_start = headings[1].span.start;
+
+        let fold_range_1 = headings[0].fold_span.clone();
+        let fold_range_2 = headings[1].fold_span.clone();
+
+        let folded_text_1 = rope.byte_slice(fold_range_1).to_string();
+
+        assert!(
+            folded_text_1.contains("* Section one"),
+            "Should include the headline"
+        );
+        assert!(
+            folded_text_1.contains("Body text for section one."),
+            "Should include the section"
+        );
+        assert!(
+            !folded_text_1.contains("* Section Two"),
+            "Should not include the next section"
+        );
+
+        let folded_text_2 = rope.byte_slice(fold_range_2).to_string();
+
+        assert!(
+            folded_text_2.contains("* Section Two"),
+            "Should include the headline"
+        );
+        assert!(
+            folded_text_2.contains("Body of two"),
+            "Should include the section"
+        );
+    }
+}
