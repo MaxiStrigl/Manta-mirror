@@ -4,6 +4,8 @@ use std::time::Instant;
 
 use gpui::*;
 use manta_api::InlineReplacement;
+use manta_config::Settings;
+use manta_config::theme::Theme;
 use manta_core::buffer::Buffer;
 use manta_core::language::HeadingID;
 use modalkit::actions::{Action, EditAction, EditorAction, HistoryAction, InsertTextAction};
@@ -28,24 +30,28 @@ impl EventEmitter<BufferEvent> for Buffer {}
 
 pub struct VimEditor {
     pub buffer: Entity<Buffer>,
-    _buffer_subscription: Subscription,
     pub cursor_offset: usize,
+
+    pub is_insert_mode: bool,
+    pub focus_handle: FocusHandle,
+
+    pub replacements: HashMap<usize, InlineReplacement>,
+    pub next_replacement_id: usize,
+
+    _buffer_subscription: Subscription,
     folded: HashSet<HeadingID>,
     line_map: Vec<usize>,
 
     cursor_visible: bool,
-    pub is_insert_mode: bool,
     _blink_task: Task<()>,
     target_col: usize,
     last_activity: Instant,
 
     vim_machine: VimMachine<TerminalKey, EmptyInfo>,
-
     scroll_handle: UniformListScrollHandle,
-    pub focus_handle: FocusHandle,
 
-    pub replacements: HashMap<usize, InlineReplacement>,
-    pub next_replacement_id: usize,
+    theme: Theme,
+    settings: Settings,
 }
 
 #[derive(std::default::Default, PartialEq, Clone)]
@@ -60,7 +66,12 @@ struct StyleSpan {
 }
 
 impl VimEditor {
-    pub fn new(cx: &mut Context<Self>, buffer: Entity<Buffer>) -> Self {
+    pub fn new(
+        cx: &mut Context<Self>,
+        buffer: Entity<Buffer>,
+        theme: &Theme,
+        settings: &Settings,
+    ) -> Self {
         let _buffer_subscription = cx.subscribe(&buffer, |editor, _, event, cx| {
             match event {
                 BufferEvent::LinesInserted { row, line_delta } => {
@@ -164,10 +175,22 @@ impl VimEditor {
             folded,
             replacements: HashMap::new(),
             next_replacement_id: 0,
+            settings: settings.clone(),
+            theme: theme.clone(),
         };
 
         res.rebuild_line_map(cx);
         res
+    }
+
+    pub fn update_settings(&mut self, settings: Settings, cx: &mut Context<Self>) {
+        self.settings = settings;
+        cx.notify();
+    }
+
+    pub fn update_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        self.theme = theme;
+        cx.notify();
     }
 
     fn rebuild_line_map(&mut self, cx: &mut Context<Self>) {
@@ -1061,7 +1084,7 @@ impl Render for VimEditor {
             .flex_col()
             .size_full()
             .bg(rgb(0x1e1e1e))
-            .text_size(px(manta_config::CONFIG.editor_settings.font_size))
+            .text_size(px(self.settings.font_size))
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::handle_key_down))
             .child(

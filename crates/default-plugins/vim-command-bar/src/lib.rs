@@ -1,11 +1,14 @@
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use gpui::{
-    AppContext, Context, EventEmitter, FocusHandle, FontWeight, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, Styled, Window, div, px, rgb,
+    AppContext, Context, Entity, EventEmitter, FocusHandle, FontWeight, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, Render, Styled, Window, div, px, rgb,
 };
-use manta_api::{CommandInfo, EditorAPI, MantaPlugin};
+use manta_api::{CommandInfo, EditorAPI, MantaPlugin, Theme};
 use manta_components::{FuzzySearch, FuzzySearchEvent};
-use manta_config;
 
 pub enum BarState {
     Status,
@@ -21,16 +24,19 @@ pub struct VimCommandBar {
     pub workspace_dir: Option<PathBuf>,
     pub is_insert_mode: bool,
     pub cursor_position: Option<(usize, usize)>,
+    pub theme: Arc<Mutex<Theme>>,
 }
 
 impl VimCommandBar {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(theme: Arc<Mutex<Theme>>, cx: &mut Context<Self>) -> Self {
+        let theme_for_search = Arc::clone(&theme);
 
         let searcher = FuzzySearch::new(
-            |command: &CommandInfo, is_slected: bool| {
-                let theme_color_bg = manta_config::CONFIG.theme.color_bg;
-                let theme_color_surface = manta_config::CONFIG.theme.color_surface;
-                let theme_color_text = manta_config::CONFIG.theme.color_text;
+            move |command: &CommandInfo, is_slected: bool| {
+                let t = theme_for_search.lock().unwrap();
+                let theme_color_bg = t.color_bg;
+                let theme_color_surface = t.color_surface;
+                let theme_color_text = t.color_text;
 
                 let display = command.name.clone();
 
@@ -61,6 +67,7 @@ impl VimCommandBar {
             workspace_dir: None,
             is_insert_mode: false,
             cursor_position: None,
+            theme,
         }
     }
 
@@ -72,7 +79,7 @@ impl VimCommandBar {
     fn handle_key_down(
         &mut self,
         event: &KeyDownEvent,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if matches!(self.state, BarState::Status) {
@@ -114,11 +121,25 @@ impl VimCommandBar {
 impl EventEmitter<String> for VimCommandBar {}
 
 impl Render for VimCommandBar {
-    fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme_color_bg = manta_config::CONFIG.theme.color_bg;
-        let theme_color_surface = manta_config::CONFIG.theme.color_surface;
-        let theme_color_text = manta_config::CONFIG.theme.color_text;
-        let theme_color_border = manta_config::CONFIG.theme.color_border;
+    fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (
+            theme_color_bg,
+            theme_color_surface,
+            theme_color_text,
+            theme_color_border,
+            theme_color_insert,
+            theme_color_normal,
+        ) = {
+            let theme = self.theme.lock().unwrap();
+            (
+                theme.color_bg,
+                theme.color_surface,
+                theme.color_text,
+                theme.color_border,
+                theme.color_mode_insert,
+                theme.color_mode_normal,
+            )
+        };
 
         let mut layout = div()
             .w_full()
@@ -138,53 +159,61 @@ impl Render for VimCommandBar {
                         .border_color(rgb(theme_color_border))
                         .flex()
                         .child(
-                            div().children([
-                                div().child(format!(
-                                    "{}",
-                                    if self.is_insert_mode.clone() {
-                                        "Insert"
-                                    } else {
-                                        "Normal"
-                                    }
-                                ))
-                                .bg(if self.is_insert_mode.clone() {
-                                        rgb(manta_config::CONFIG.theme.color_mode_insert)
-                                    } else {
-                                        rgb(manta_config::CONFIG.theme.color_mode_normal)
-                                    })
-                                .font_family("Noto Sans")
-                                .line_height(px(28.0))
-                                .text_size(px(16.0))
-                                .font_weight(FontWeight::BOLD)
-                                .px_2()
-                                .w_24()
-                                .text_align(gpui::TextAlign::Center),
-                                div().child(
-                                if let Some((line_index, cursor_offset)) = &self.cursor_position {
-                                    format!(
-                                        "{}:{}",
-                                        line_index, cursor_offset
-                                    )
-                                } else { "".to_string() })
-                                .line_height(px(32.0))
-                                .text_size(px(16.0))
-                                .border_r_1()
-                                .border_color(rgb(manta_config::CONFIG.theme.color_border))
-                                .px_2(),
-                                div().child(format!(
-                                    "{}",
-                                    &self
-                                    .workspace_dir
-                                    .clone()
-                                    .map_or("~".to_string(), |p| p.to_string_lossy().to_string())
-                                ))
-                                .line_height(px(32.0))
-                                .text_size(px(16.0))
-                                .px_2(),
-                            ])
-                            .flex()
-                            .flex_row()
-                    )
+                            div()
+                                .children([
+                                    div()
+                                        .child(format!(
+                                            "{}",
+                                            if self.is_insert_mode.clone() {
+                                                "Insert"
+                                            } else {
+                                                "Normal"
+                                            }
+                                        ))
+                                        .bg(if self.is_insert_mode.clone() {
+                                            rgb(theme_color_insert)
+                                        } else {
+                                            rgb(theme_color_normal)
+                                        })
+                                        .font_family("Noto Sans")
+                                        .line_height(px(28.0))
+                                        .text_size(px(16.0))
+                                        .font_weight(FontWeight::BOLD)
+                                        .px_2()
+                                        .w_24()
+                                        .text_align(gpui::TextAlign::Center),
+                                    div()
+                                        .child(
+                                            if let Some((line_index, cursor_offset)) =
+                                                &self.cursor_position
+                                            {
+                                                format!("{}:{}", line_index, cursor_offset)
+                                            } else {
+                                                "".to_string()
+                                            },
+                                        )
+                                        .line_height(px(32.0))
+                                        .text_size(px(16.0))
+                                        .border_r_1()
+                                        .border_color(rgb(theme_color_border))
+                                        .px_2(),
+                                    div()
+                                        .child(format!(
+                                            "{}",
+                                            &self
+                                                .workspace_dir
+                                                .clone()
+                                                .map_or("~".to_string(), |p| p
+                                                    .to_string_lossy()
+                                                    .to_string())
+                                        ))
+                                        .line_height(px(32.0))
+                                        .text_size(px(16.0))
+                                        .px_2(),
+                                ])
+                                .flex()
+                                .flex_row(),
+                        ),
                 );
             }
             BarState::Command => {
@@ -210,12 +239,29 @@ impl Render for VimCommandBar {
                     )
             }
         }
-
         layout
     }
 }
 
-pub struct VimCommandBarPlugin;
+struct PluginState {
+    bar: Option<Entity<VimCommandBar>>,
+    theme: Option<Arc<Mutex<Theme>>>,
+}
+
+pub struct VimCommandBarPlugin {
+    state: Arc<Mutex<PluginState>>,
+}
+
+impl Default for VimCommandBarPlugin {
+    fn default() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(PluginState {
+                bar: None,
+                theme: None,
+            })),
+        }
+    }
+}
 
 impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for VimCommandBarPlugin {
     fn id(&self) -> &'static str {
@@ -223,12 +269,23 @@ impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for VimCommandBarPlugin {
     }
 
     fn on_load(&self, api: &mut dyn manta_api::EditorAPI<T>, cx: &mut Context<T>) {
+        let theme = api.get_theme();
+        let theme_mutex = Arc::new(Mutex::new(theme));
+
         let path = api.get_buffer_path(cx);
+        let bar_theme = Arc::clone(&theme_mutex);
         let bar = cx.new(|cx| {
-            let mut bar = VimCommandBar::new(cx);
+            let mut bar = VimCommandBar::new(bar_theme, cx);
             bar.workspace_dir = path;
             bar
         });
+
+        {
+            let mut state = self.state.lock().unwrap();
+            state.bar = Some(bar.clone());
+            state.theme = Some(Arc::clone(&theme_mutex))
+        }
+
         api.set_bottom_bar(Some(bar.clone().into()), None, cx);
 
         cx.subscribe(&bar, |workspace: &mut T, view, command_id, cx| {
@@ -281,5 +338,12 @@ impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for VimCommandBarPlugin {
                 });
             }),
         );
+    }
+
+    fn on_theme_change(&self, new_theme: Theme, _cx: &mut Context<T>) {
+        let state = self.state.lock().unwrap();
+        if let Some(theme) = &state.theme {
+            *theme.lock().unwrap() = new_theme
+        }
     }
 }

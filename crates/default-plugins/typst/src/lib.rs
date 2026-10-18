@@ -1,15 +1,7 @@
-use std::{
-    collections::HashSet,
-    fs,
-    path::PathBuf,
-    process::{Command, ExitStatus},
-    sync::{Arc, Mutex},
-};
+use std::{fs, path::PathBuf, process::Command};
 
-use gpui::{
-    AnyView, AppContext, IntoElement, ParentElement, Render, Styled, div, img, px, rgb, svg,
-};
-use manta_api::{InlineReplacement, MantaPlugin};
+use gpui::{AnyView, AppContext, IntoElement, ParentElement, Render, Styled, div, img, rgb};
+use manta_api::{InlineReplacement, MantaPlugin, Theme};
 
 pub struct TypstPlugin;
 
@@ -20,7 +12,7 @@ impl<T: 'static> MantaPlugin<T> for TypstPlugin {
         MOCK_TYPST_ID
     }
 
-    fn on_load(&self, api: &mut dyn manta_api::EditorAPI<T>, cx: &mut gpui::prelude::Context<T>) {
+    fn on_load(&self, api: &mut dyn manta_api::EditorAPI<T>, _cx: &mut gpui::prelude::Context<T>) {
         api.register_command(
             "typst-mock:toggle",
             "Toggle the red square",
@@ -57,7 +49,7 @@ impl<T: 'static> MantaPlugin<T> for TypstPlugin {
 
                 let formular = text[start.unwrap()..=end].to_string();
 
-                let view: AnyView = cx.new(|cx| TypstFormularView::new(formular)).into();
+                let view: AnyView = cx.new(|_cx| TypstFormularView::new(formular)).into();
 
                 let replacement = InlineReplacement {
                     plugin_id: MOCK_TYPST_ID.to_string(),
@@ -68,9 +60,13 @@ impl<T: 'static> MantaPlugin<T> for TypstPlugin {
 
                 dbg!(&replacement);
 
-                let id = api.add_inline_replacement(replacement, cx);
+                let _ = api.add_inline_replacement(replacement, cx);
             }),
         );
+    }
+
+    fn on_theme_change(&self, new_theme: Theme, _cx: &mut gpui::prelude::Context<T>) {
+        let _ = new_theme;
     }
 }
 
@@ -116,8 +112,8 @@ impl TypstFormularView {
 impl Render for TypstFormularView {
     fn render(
         &mut self,
-        window: &mut gpui::Window,
-        cx: &mut gpui::prelude::Context<Self>,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::prelude::Context<Self>,
     ) -> impl IntoElement {
         if let Some(path) = self.svg_path.clone() {
             let p: PathBuf = PathBuf::from(path);

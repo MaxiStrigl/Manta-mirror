@@ -1,14 +1,17 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use gpui::{AnyView, Focusable, Window};
+use gpui::{AnyView, Window};
 use gpui::{Context, Entity, EventEmitter, FocusHandle, IntoElement, div, prelude::*, rgb};
 use manta_api::{CommandInfo, EditorAPI, MantaPlugin};
+use manta_config::theme::Theme;
+use manta_config::{MantaConfig, Settings};
 use manta_core::buffer::Buffer;
 
-use crate::{CustomPane, VimEditor, editor};
+use crate::{CustomPane, VimEditor};
 
-enum CenterPane {
+pub enum CenterPane {
     Editor(Entity<VimEditor>),
     CustomUI(AnyView, FocusHandle),
 }
@@ -30,6 +33,8 @@ pub struct Workspace {
     >,
 
     pub plugins: Vec<Box<dyn MantaPlugin<Workspace>>>,
+    pub settings: Arc<Settings>,
+    pub theme: Arc<Theme>,
 }
 
 pub enum EditorEvent {
@@ -41,6 +46,7 @@ impl Workspace {
     pub fn new(
         cx: &mut Context<Self>,
         workspace_dir: PathBuf,
+        config: MantaConfig,
         initial_file: Option<PathBuf>,
     ) -> Self {
         let buffer = cx.new(|_| {
@@ -51,7 +57,10 @@ impl Workspace {
             }
         });
 
-        let editor = cx.new(|cx| VimEditor::new(cx, buffer.clone()));
+        let settings = Arc::new(config.settings);
+        let theme = Arc::new(config.theme);
+
+        let editor = cx.new(|cx| VimEditor::new(cx, buffer.clone(), &theme, &settings));
 
         cx.subscribe(&editor, |this, _, event, cx| match event {
             EditorEvent::ExecuteCommand(name) => {
@@ -70,6 +79,8 @@ impl Workspace {
             bottom_bar: None,
             commands: HashMap::new(),
             plugins: Vec::new(),
+            settings,
+            theme,
         };
         workspace.register_core_commands();
 
@@ -82,6 +93,7 @@ impl Workspace {
     }
 
     pub fn execute_command(&mut self, name: &str, cx: &mut Context<Self>) -> Result<(), String> {
+        dbg!(name);
         if let Some((description, action)) = self.commands.remove(name) {
             action(self as &mut dyn EditorAPI<Workspace>, cx);
             self.commands
@@ -101,7 +113,13 @@ impl Workspace {
             }),
         );
 
-        self.register_command("core:quit", "Quit Editor", Box::new(|api, cx| cx.quit()));
+        self.register_command("core:quit", "Quit Editor", Box::new(|_api, cx| cx.quit()));
+
+        self.register_command(
+            "core:black",
+            "Makes theme black",
+            Box::new(move |api, cx| api.set_theme(Theme::default(), cx)),
+        );
     }
 }
 
@@ -139,7 +157,7 @@ impl EditorAPI<Workspace> for Workspace {
     fn open_file(&mut self, path: &str, cx: &mut Context<Workspace>) {
         let buffer = cx.new(|_| Buffer::from_file(path).unwrap_or_else(|_| Buffer::new()));
 
-        let new_editor = cx.new(|cx| VimEditor::new(cx, buffer));
+        let new_editor = cx.new(|cx| VimEditor::new(cx, buffer, &self.theme, &self.settings));
 
         cx.subscribe(&new_editor, |this, _, event, cx| match event {
             EditorEvent::ExecuteCommand(name) => {
@@ -346,6 +364,31 @@ impl EditorAPI<Workspace> for Workspace {
         self.center_pane = CenterPane::CustomUI(pane.clone().into(), handle);
 
         self.close_panel(cx);
+    }
+
+    fn get_theme(&self) -> Theme {
+        let x = (*self.theme).clone();
+        dbg!(&self.theme);
+        x
+    }
+
+    fn set_theme(&mut self, new_theme: Theme, cx: &mut Context<Self>) {
+        self.theme = Arc::new(new_theme.clone());
+
+        if let CenterPane::Editor(e) = &self.center_pane {
+            e.update(cx, |editor, cx| {
+                editor.update_theme(new_theme.clone(), cx);
+                println!("Update theme");
+            });
+        }
+
+        let plugins = std::mem::take(&mut self.plugins);
+        for plugin in &plugins {
+            plugin.on_theme_change(new_theme.clone(), cx);
+        }
+
+        self.plugins = plugins;
+        cx.notify();
     }
 }
 

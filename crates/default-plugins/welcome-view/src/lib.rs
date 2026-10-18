@@ -1,12 +1,14 @@
+use std::sync::{Arc, Mutex};
+
 use gpui::{
-    AppContext, Application, Context, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Window, WindowOptions, div, red,
-    rgb, white,
+    AppContext, Context, EventEmitter, FocusHandle, InteractiveElement, ParentElement, Render,
+    StatefulInteractiveElement, Styled, WeakEntity, div, rgb,
 };
-use manta_api::{EditorAPI, MantaPlugin};
+use manta_api::{EditorAPI, MantaPlugin, Theme};
 
 pub struct WelcomView {
     focus_handle: FocusHandle,
+    theme: Theme,
 }
 
 pub enum WelcomeEvent {
@@ -18,13 +20,12 @@ impl EventEmitter<WelcomeEvent> for WelcomView {}
 impl Render for WelcomView {
     fn render(
         &mut self,
-        window: &mut gpui::Window,
+        _window: &mut gpui::Window,
         cx: &mut gpui::prelude::Context<Self>,
     ) -> impl gpui::prelude::IntoElement {
-        let theme_color_bg = manta_config::CONFIG.theme.color_bg;
-        let theme_color_surface = manta_config::CONFIG.theme.color_surface;
-        let theme_color_text = manta_config::CONFIG.theme.color_text;
-
+        let theme_color_bg = self.theme.color_bg;
+        let theme_color_surface = self.theme.color_surface;
+        let theme_color_text = self.theme.color_text;
 
         div()
             .size_full()
@@ -47,27 +48,46 @@ impl Render for WelcomView {
                     .mt_4()
                     .child("Open File")
                     .id("open-file-btn")
-                    .on_click(cx.listener(|this, event, window, cx| {
-                        cx.emit(WelcomeEvent::ExecuteCommand("core:open_file".to_string()));
+                    .on_click(cx.listener(|_this, _event, _window, cx| {
+                        println!("Button pressed");
+                        cx.emit(WelcomeEvent::ExecuteCommand("core:black".to_string()));
                     })),
             )
     }
 }
 
-pub struct WelcomeViewPlugin;
+pub struct PluginState {
+    active_view: Option<WeakEntity<WelcomView>>,
+}
+
+pub struct WelcomeViewPlugin {
+    state: Arc<Mutex<PluginState>>,
+}
+
+impl Default for WelcomeViewPlugin {
+    fn default() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(PluginState { active_view: None })),
+        }
+    }
+}
 
 impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for WelcomeViewPlugin {
     fn id(&self) -> &'static str {
         "welcome-gui"
     }
 
-    fn on_load(&self, api: &mut dyn manta_api::EditorAPI<T>, cx: &mut Context<T>) {
+    fn on_load(&self, api: &mut dyn manta_api::EditorAPI<T>, _cx: &mut Context<T>) {
+        let state = Arc::clone(&self.state);
+
         api.register_command(
             "welcome:open",
             "Open Start Screen",
-            Box::new(|api, cx| {
+            Box::new(move |api, cx| {
+                let theme = api.get_theme();
                 let view = cx.new(|cx| WelcomView {
                     focus_handle: cx.focus_handle(),
+                    theme,
                 });
                 let handle = view.read(cx).focus_handle.clone();
 
@@ -78,8 +98,21 @@ impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for WelcomeViewPlugin {
                 })
                 .detach();
 
+                state.lock().unwrap().active_view = Some(view.downgrade());
+
                 api.open_custom_panel(view.into(), Some(handle), cx);
             }),
         );
+    }
+
+    fn on_theme_change(&self, new_theme: Theme, cx: &mut Context<T>) {
+        let state = self.state.lock().unwrap();
+
+        if let Some(weak_view) = state.active_view.as_ref() {
+            let _ = weak_view.update(cx, |view, cx| {
+                view.theme = new_theme;
+                cx.notify();
+            });
+        }
     }
 }

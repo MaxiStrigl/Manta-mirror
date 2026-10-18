@@ -1,6 +1,4 @@
-use gpui::{
-    AnyElement, EventEmitter, KeyDownEvent, UniformListScrollHandle, Window, div, prelude::*,
-};
+use gpui::{AnyElement, EventEmitter, KeyDownEvent, UniformListScrollHandle, div, prelude::*};
 use nucleo::{Config, Matcher, Utf32Str, pattern::Pattern};
 use std::sync::Arc;
 

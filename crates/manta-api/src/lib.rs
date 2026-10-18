@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use gpui::{AnyView, Context, FocusHandle};
+pub use manta_config::theme::Theme;
 
 #[derive(Debug, Clone)]
 pub struct CommandInfo {
@@ -19,7 +20,9 @@ pub struct InlineReplacement {
 pub trait MantaPlugin<T> {
     fn id(&self) -> &'static str;
     fn on_load(&self, api: &mut dyn EditorAPI<T>, cx: &mut Context<T>);
-    fn on_unload(&self, api: &mut dyn EditorAPI<T>) {}
+    fn on_unload(&self, _api: &mut dyn EditorAPI<T>) {}
+
+    fn on_theme_change(&self, new_theme: Theme, cx: &mut Context<T>);
 }
 
 pub trait EditorAPI<T> {
@@ -50,6 +53,7 @@ pub trait EditorAPI<T> {
         cx: &mut Context<T>,
     ) -> usize;
     fn remove_inline_replacement(&mut self, id: usize, cx: &mut Context<T>);
+    fn set_theme(&mut self, theme: Theme, cx: &mut Context<T>);
 
     fn get_cursor_byte_offset(&mut self, cx: &mut Context<T>) -> usize;
     fn get_cursor_char_position(&mut self, cx: &mut Context<T>) -> Option<usize>;
@@ -68,4 +72,5 @@ pub trait EditorAPI<T> {
     fn get_available_commands(&self) -> Vec<CommandInfo>;
     fn get_buffer_path(&self, cx: &mut Context<T>) -> Option<PathBuf>;
     fn get_insert_mode_status(&self, cx: &mut Context<T>) -> bool;
+    fn get_theme(&self) -> Theme;
 }

@@ -3,6 +3,7 @@ use std::{borrow::Cow, path::PathBuf};
 use file_finder::FileFinderPlugin;
 use gpui::*;
 use manta_api::EditorAPI;
+use manta_config::MantaConfig;
 use manta_gui::Workspace;
 use typst::TypstPlugin;
 use vim_command_bar::VimCommandBarPlugin;
@@ -13,6 +14,8 @@ fn main() {
 
     let mut initial_file: Option<PathBuf> = None;
     let mut workspace_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    let config: MantaConfig = manta_config::load().unwrap_or_else(|_| MantaConfig::default());
 
     if args.len() > 1 {
         let path = PathBuf::from(&args[1]);
@@ -32,7 +35,10 @@ fn main() {
 
     app.run(|cx: &mut App| {
         cx.text_system()
-            .add_fonts(vec![Cow::Borrowed(include_bytes!("../assets/fonts/NotoSans.ttf"))]).expect("Failed to load font");
+            .add_fonts(vec![Cow::Borrowed(include_bytes!(
+                "../assets/fonts/NotoSans.ttf"
+            ))])
+            .expect("Failed to load font");
 
         let options = WindowOptions {
             ..Default::default()
@@ -42,19 +48,20 @@ fn main() {
             .open_window(options, |_window, cx| {
                 let is_empty_start = initial_file.is_none();
 
-                let workspace = cx.new(|cx| Workspace::new(cx, workspace_dir, initial_file));
+                let workspace =
+                    cx.new(|cx| Workspace::new(cx, workspace_dir, config, initial_file));
 
                 workspace.update(cx, |workspace, cx| {
-                    let finder = Box::new(FileFinderPlugin);
+                    let finder = Box::new(FileFinderPlugin::default());
                     workspace.load_plugin(finder, cx);
 
-                    let bar = Box::new(VimCommandBarPlugin);
+                    let bar = Box::new(VimCommandBarPlugin::default());
                     workspace.load_plugin(bar, cx);
 
                     let typst = Box::new(TypstPlugin);
                     workspace.load_plugin(typst, cx);
 
-                    let welcome = Box::new(WelcomeViewPlugin);
+                    let welcome = Box::new(WelcomeViewPlugin::default());
                     workspace.load_plugin(welcome, cx);
                 });
 
@@ -69,7 +76,7 @@ fn main() {
             .expect("Failed to open window");
 
         window
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _window, cx| {
                 workspace.focus_main_panel(cx);
             })
             .unwrap();

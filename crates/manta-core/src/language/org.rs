@@ -256,9 +256,6 @@ mod tests {
         let headings = service.outline();
         assert_eq!(headings.len(), 2);
 
-        let heading1_start = headings[0].span.start;
-        let heading2_start = headings[1].span.start;
-
         let fold_range_1 = headings[0].fold_span.clone();
         let fold_range_2 = headings[1].fold_span.clone();
 

@@ -23,7 +23,7 @@ impl CustomPane {
     pub fn handle_key_down(
         &mut self,
         event: &KeyDownEvent,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event.keystroke.key.as_str() {
@@ -44,7 +44,7 @@ impl Focusable for CustomPane {
 impl Render for CustomPane {
     fn render(
         &mut self,
-        window: &mut gpui::Window,
+        _window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> impl gpui::prelude::IntoElement {
         div()

@@ -4,10 +4,11 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-gpui.workspace = true 
+gpui.workspace = true
 manta-core.workspace = true
 manta-gui.workspace = true
 manta-api.workspace = true
+manta-config.workspace = true
 
 file-finder.workspace = true
 vim-command-bar.workspace = true

@@ -1,8 +1,10 @@
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use gpui::{Context, EventEmitter, FocusHandle, IntoElement, Window, div, px, rgb};
 use gpui::{KeyDownEvent, prelude::*};
 
+use manta_api::Theme;
 use manta_components::{FuzzySearch, FuzzySearchEvent};
 
 #[derive(Clone)]
@@ -24,17 +26,17 @@ pub struct FileFinder {
     current_dir: PathBuf,
     input_text: String,
     pub focus_handle: FocusHandle,
+    theme: Arc<Mutex<Theme>>,
 }
 
 impl EventEmitter<FinderEvent> for FileFinder {}
 
 impl FileFinder {
-    pub fn new(cx: &mut Context<Self>, rootdir: PathBuf) -> FileFinder {
+    pub fn new(cx: &mut Context<Self>, rootdir: PathBuf, theme: Arc<Mutex<Theme>>) -> FileFinder {
+        let theme_for_search = Arc::clone(&theme);
         let searcher = FuzzySearch::new(
-            |entry: &FileEntry, is_selected: bool| {
-                let theme_color_bg = manta_config::CONFIG.theme.color_bg;
-                let theme_color_surface = manta_config::CONFIG.theme.color_surface;
-                let theme_color_text = manta_config::CONFIG.theme.color_text;
+            move |entry: &FileEntry, is_selected: bool| {
+                let t = theme_for_search.lock().unwrap();
 
                 let display = if entry.is_dir {
                     format!("{}/", entry.name)
@@ -47,11 +49,11 @@ impl FileFinder {
                     .py_1()
                     .line_height(px(26.0))
                     .bg(if is_selected {
-                        rgb(theme_color_surface)
+                        rgb(t.color_surface)
                     } else {
-                        rgb(theme_color_bg)
+                        rgb(t.color_bg)
                     })
-                    .text_color(rgb(theme_color_text))
+                    .text_color(rgb(t.color_text))
                     .child(display)
                     .into_any_element()
             },
@@ -63,6 +65,7 @@ impl FileFinder {
             current_dir: rootdir.clone(),
             input_text: String::new(),
             focus_handle: cx.focus_handle(),
+            theme,
         };
         finder.load_dir(cx, rootdir);
 
@@ -71,7 +74,7 @@ impl FileFinder {
 
     fn load_dir(&mut self, cx: &mut Context<Self>, path: PathBuf) {
         self.current_dir = path.clone();
-        let display_path = format!("{}/", path.to_string_lossy().to_string());
+        let _display_path = format!("{}/", path.to_string_lossy().to_string());
 
         let fetch_task = cx.background_executor().spawn(async move {
             let mut entries = Vec::new();
@@ -178,16 +181,20 @@ impl FileFinder {
 }
 
 impl Render for FileFinder {
-    fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.theme.lock().unwrap();
         div()
             .flex()
             .flex_col()
             .max_h_64()
+            .bg(rgb(theme.color_bg))
+            .border_t_1()
+            .border_color(rgb(theme.color_border))
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::handle_key_down))
             .children([
                 div().child(format!("Search File: {}", self.input_text)),
-                div().child(self.searcher.render_list())
+                div().child(self.searcher.render_list()),
             ])
     }
 }
