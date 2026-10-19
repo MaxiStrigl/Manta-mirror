@@ -413,8 +413,8 @@ impl Render for Workspace {
         if let Some(panel) = &self.active_panel {
             layout = layout.child(
                 div()
-                    .border_t_1()
-                    .border_color(rgb(0x0000ff))
+                    // .border_t_1()
+                    .border_color(rgb(self.theme.color_border))
                     .child(panel.clone()),
             );
         }

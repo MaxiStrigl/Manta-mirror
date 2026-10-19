@@ -9,7 +9,7 @@ mod ui;
 
 pub struct PluginState {
     active_finder: Option<WeakEntity<FileFinder>>,
-    theme: Option<Arc<Mutex<Theme>>>,
+    theme: Option<Arc<Theme>>,
 }
 
 pub struct FileFinderPlugin {
@@ -34,7 +34,7 @@ impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for FileFinderPlugin {
 
     fn on_load(&self, api: &mut dyn manta_api::EditorAPI<T>, _cs: &mut Context<T>) {
         let theme = api.get_theme();
-        let theme_mutex = Arc::new(Mutex::new(theme));
+        let theme_mutex = Arc::new(theme);
 
         {
             let mut state = self.state.lock().unwrap();
@@ -77,11 +77,9 @@ impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for FileFinderPlugin {
     fn on_theme_change(&self, new_theme: Theme, cx: &mut Context<T>) {
         let state = self.state.lock().unwrap();
 
-        if let Some(theme_mutex) = &state.theme {
-            *theme_mutex.lock().unwrap() = new_theme;
-        }
         if let Some(finder) = &state.active_finder {
-            let _ = finder.update(cx, |_finder, cx| {
+            let _ = finder.update(cx, |finder, cx| {
+                finder.theme = Arc::new(new_theme);
                 cx.notify();
             });
         }

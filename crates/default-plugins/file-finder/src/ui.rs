@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use gpui::{Context, EventEmitter, FocusHandle, IntoElement, Window, div, px, rgb};
 use gpui::{KeyDownEvent, prelude::*};
@@ -26,17 +26,17 @@ pub struct FileFinder {
     current_dir: PathBuf,
     input_text: String,
     pub focus_handle: FocusHandle,
-    theme: Arc<Mutex<Theme>>,
+    pub theme: Arc<Theme>,
 }
 
 impl EventEmitter<FinderEvent> for FileFinder {}
 
 impl FileFinder {
-    pub fn new(cx: &mut Context<Self>, rootdir: PathBuf, theme: Arc<Mutex<Theme>>) -> FileFinder {
+    pub fn new(cx: &mut Context<Self>, rootdir: PathBuf, theme: Arc<Theme>) -> FileFinder {
         let theme_for_search = Arc::clone(&theme);
         let searcher = FuzzySearch::new(
             move |entry: &FileEntry, is_selected: bool| {
-                let t = theme_for_search.lock().unwrap();
+                let t = &theme_for_search;
 
                 let display = if entry.is_dir {
                     format!("{}/", entry.name)
@@ -182,18 +182,21 @@ impl FileFinder {
 
 impl Render for FileFinder {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = self.theme.lock().unwrap();
+        let theme = &self.theme;
         div()
             .flex()
             .flex_col()
-            .max_h_64()
+            .w_full()
+            .h_64()
             .bg(rgb(theme.color_bg))
             .border_t_1()
             .border_color(rgb(theme.color_border))
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::handle_key_down))
             .children([
-                div().child(format!("Search File: {}", self.input_text)),
+                div()
+                    .child(format!("Search File: {}", self.input_text))
+                    .text_color(rgb(theme.color_text)),
                 div().child(self.searcher.render_list()),
             ])
     }
