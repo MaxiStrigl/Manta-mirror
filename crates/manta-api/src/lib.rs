@@ -1,13 +1,11 @@
+mod command;
+
 use std::path::PathBuf;
 
 use gpui::{AnyView, Context, FocusHandle};
 pub use manta_config::theme::Theme;
 
-#[derive(Debug, Clone)]
-pub struct CommandInfo {
-    pub name: String,
-    pub description: String,
-}
+pub use command::{Arg, CommandSpec, ParamKind};
 
 #[derive(Debug, Clone)]
 pub struct InlineReplacement {
@@ -28,10 +26,15 @@ pub trait MantaPlugin<T> {
 pub trait EditorAPI<T> {
     fn register_command(
         &mut self,
-        name: &str,
-        desciption: &str,
-        action: Box<dyn Fn(&mut dyn EditorAPI<T>, &mut Context<T>)>,
+        spec: CommandSpec,
+        action: Box<dyn Fn(&mut dyn EditorAPI<T>, &[Arg], &mut Context<T>)>,
     );
+    fn execute_command(
+        &mut self,
+        id: &str,
+        args: &[Arg],
+        cx: &mut Context<T>,
+    ) -> Result<(), String>;
 
     fn focus_main_panel(&mut self, cx: &mut Context<T>);
     fn open_panel(&mut self, view: AnyView, focus: Option<FocusHandle>, cx: &mut Context<T>);
@@ -45,7 +48,6 @@ pub trait EditorAPI<T> {
         focus_handle: Option<FocusHandle>,
         cx: &mut Context<T>,
     );
-    fn execute_command(&mut self, name: &str, cx: &mut Context<T>) -> Result<(), String>;
     fn save_active_file(&mut self, cx: &mut Context<T>);
     fn add_inline_replacement(
         &mut self,
@@ -69,7 +71,7 @@ pub trait EditorAPI<T> {
     // --- Gather information ---
 
     fn workspace_dir(&self) -> PathBuf;
-    fn get_available_commands(&self) -> Vec<CommandInfo>;
+    fn get_available_commands(&self) -> Vec<CommandSpec>;
     fn get_buffer_path(&self, cx: &mut Context<T>) -> Option<PathBuf>;
     fn get_insert_mode_status(&self, cx: &mut Context<T>) -> bool;
     fn get_theme(&self) -> Theme;
