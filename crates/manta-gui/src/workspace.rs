@@ -1,19 +1,31 @@
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{AnyView, Window};
 use gpui::{Context, Entity, EventEmitter, FocusHandle, IntoElement, div, prelude::*, rgb};
-use manta_api::{CommandInfo, EditorAPI, MantaPlugin};
+use manta_api::{Arg, CommandSpec, EditorAPI, EventSubscription, MantaPlugin};
 use manta_config::theme::Theme;
 use manta_config::{MantaConfig, Settings};
 use manta_core::buffer::Buffer;
 
 use crate::{CustomPane, VimEditor};
 
+pub struct EventSlot<E> {
+    alive: Rc<Cell<bool>>,
+    handler: Box<dyn Fn(&E, &mut Context<Workspace>)>,
+}
+
 pub enum CenterPane {
     Editor(Entity<VimEditor>),
     CustomUI(AnyView, FocusHandle),
+}
+
+struct CommandEntry {
+    spec: CommandSpec,
+    action: Box<dyn Fn(&mut dyn EditorAPI<Workspace>, &[Arg], &mut Context<Workspace>)>,
 }
 
 pub struct Workspace {
@@ -24,23 +36,13 @@ pub struct Workspace {
     pub next_focus: Option<FocusHandle>,
     pub bottom_bar: Option<AnyView>,
 
-    pub commands: HashMap<
-        String,
-        (
-            String,
-            Box<dyn Fn(&mut dyn EditorAPI<Workspace>, &mut Context<Workspace>)>,
-        ),
-    >,
-
+    pub commands: HashMap<&'static str, CommandEntry>, // key = spec.id (core:save)
+    pub event_slots: Vec<EventSlot<manta_api::EditorEvent>>,
+    // here plugin event slots later
     pub plugins: Vec<Box<dyn MantaPlugin<Workspace>>>,
     pub settings: Arc<Settings>,
     pub theme: Arc<Theme>,
 }
-
-pub enum EditorEvent {
-    ExecuteCommand(String),
-}
-impl EventEmitter<EditorEvent> for VimEditor {}
 
 impl Workspace {
     pub fn new(
@@ -62,12 +64,12 @@ impl Workspace {
 
         let editor = cx.new(|cx| VimEditor::new(cx, buffer.clone(), &theme, &settings));
 
-        cx.subscribe(&editor, |this, _, event, cx| match event {
-            EditorEvent::ExecuteCommand(name) => {
-                let _ = this.execute_command(name, cx);
-            }
-        })
-        .detach();
+        // cx.subscribe(&editor, |this, _, event, cx| match event {
+        //     EditorEvent::ExecuteCommand(name) => {
+        //         let _ = this.execute_command(name, cx);
+        //     }
+        // })
+        // .detach();
 
         let center_pane = CenterPane::Editor(editor);
 
@@ -81,9 +83,9 @@ impl Workspace {
             plugins: Vec::new(),
             settings,
             theme,
+            event_slots: Vec::new(),
         };
         workspace.register_core_commands();
-
         workspace
     }
 
@@ -92,33 +94,35 @@ impl Workspace {
         self.plugins.push(plugin);
     }
 
-    pub fn execute_command(&mut self, name: &str, cx: &mut Context<Self>) -> Result<(), String> {
-        dbg!(name);
-        if let Some((description, action)) = self.commands.remove(name) {
-            action(self as &mut dyn EditorAPI<Workspace>, cx);
-            self.commands
-                .insert(name.to_string(), (description, action));
-            Ok(())
-        } else {
-            Err(format!("Command: \"{}\" not found", name))
-        }
+    pub fn execute_command(
+        &mut self,
+        id: &str,
+        args: &[Arg],
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let Some(entry) = self.commands.remove(id) else {
+            return Err(format!("Command: '{id}' not found"));
+        };
+        let command_id = entry.spec.id;
+
+        (entry.action)(self as &mut dyn EditorAPI<Workspace>, args, cx);
+        self.commands.insert(command_id, entry);
+        Ok(())
     }
 
     fn register_core_commands(&mut self) {
         self.register_command(
-            "core:save",
-            "Save File",
-            Box::new(|api, cx| {
+            CommandSpec::new("core:save", "Save file"),
+            Box::new(|api, _args, cx| {
                 api.save_active_file(cx);
             }),
         );
 
-        self.register_command("core:quit", "Quit Editor", Box::new(|_api, cx| cx.quit()));
-
         self.register_command(
-            "core:black",
-            "Makes theme black",
-            Box::new(move |api, cx| api.set_theme(Theme::default(), cx)),
+            CommandSpec::new("core:quit", "Quit Manta"),
+            Box::new(|_api, _args, cx| {
+                cx.quit();
+            }),
         );
     }
 }
@@ -126,12 +130,34 @@ impl Workspace {
 impl EditorAPI<Workspace> for Workspace {
     fn register_command(
         &mut self,
-        name: &str,
-        description: &str,
-        action: Box<dyn Fn(&mut dyn EditorAPI<Workspace>, &mut Context<Workspace>)>,
+        spec: CommandSpec,
+        action: Box<dyn Fn(&mut dyn EditorAPI<Workspace>, &[Arg], &mut Context<Workspace>)>,
     ) {
-        self.commands
-            .insert(name.to_string(), (description.to_string(), action));
+        self.commands.insert(spec.id, CommandEntry { spec, action });
+    }
+
+    fn execute_command(
+        &mut self,
+        id: &str,
+        args: &[Arg],
+        cx: &mut Context<Workspace>,
+    ) -> Result<(), String> {
+        Workspace::execute_command(self, id, args, cx)
+    }
+
+    fn subscribe_event(
+        &mut self,
+        handler: Box<dyn Fn(&manta_api::EditorEvent, &mut Context<Workspace>)>,
+        cx: &mut Context<Workspace>,
+    ) -> manta_api::EventSubscription {
+        self.event_slots.retain(|slot| slot.alive.get());
+        let alive = Rc::new(Cell::new(true));
+
+        self.event_slots.push(EventSlot {
+            alive: alive.clone(),
+            handler,
+        });
+        EventSubscription::new(alive)
     }
 
     fn open_panel(
@@ -156,32 +182,27 @@ impl EditorAPI<Workspace> for Workspace {
 
     fn open_file(&mut self, path: &str, cx: &mut Context<Workspace>) {
         let buffer = cx.new(|_| Buffer::from_file(path).unwrap_or_else(|_| Buffer::new()));
-
         let new_editor = cx.new(|cx| VimEditor::new(cx, buffer, &self.theme, &self.settings));
-
-        cx.subscribe(&new_editor, |this, _, event, cx| match event {
-            EditorEvent::ExecuteCommand(name) => {
-                let _ = this.execute_command(name, cx);
-            }
-        })
-        .detach();
-
+        // cx.subscribe(&new_editor, |this, _, event, cx| match event {
+        //     EditorEvent::ExecuteCommand(name) => {
+        //         let _ = this.execute_command(name, &[], cx);
+        //     }
+        // })
+        // .detach();
+        //
         self.center_pane = CenterPane::Editor(new_editor);
         self.close_panel(cx);
-        let _ = self.execute_command("command-bar:update", cx);
+        let _ = self.execute_command("command-bar:update", &[], cx);
     }
 
     fn workspace_dir(&self) -> PathBuf {
         self.workspace_dir.clone()
     }
 
-    fn get_available_commands(&self) -> Vec<manta_api::CommandInfo> {
+    fn get_available_commands(&self) -> Vec<CommandSpec> {
         self.commands
-            .iter()
-            .map(|(name, (description, _))| CommandInfo {
-                name: name.clone(),
-                description: description.clone(),
-            })
+            .values()
+            .map(|entry| entry.spec.clone())
             .collect()
     }
 
@@ -214,10 +235,6 @@ impl EditorAPI<Workspace> for Workspace {
         self.bottom_bar = view;
         self.next_focus = focus_handle;
         cx.notify();
-    }
-
-    fn execute_command(&mut self, name: &str, cx: &mut Context<Workspace>) -> Result<(), String> {
-        Workspace::execute_command(self, name, cx)
     }
 
     fn focus_main_panel(&mut self, cx: &mut Context<Workspace>) {
@@ -354,12 +371,12 @@ impl EditorAPI<Workspace> for Workspace {
             pane.read(cx).focus_handle.clone()
         };
 
-        cx.subscribe(&pane, |this, _, event, cx| match event {
-            EditorEvent::ExecuteCommand(name) => {
-                let _ = this.execute_command(name, cx);
-            }
-        })
-        .detach();
+        // cx.subscribe(&pane, |this, _, event, cx| match event {
+        //     EditorEvent::ExecuteCommand(name) => {
+        //         let _ = this.execute_command(name, &[], cx);
+        //     }
+        // })
+        // .detach();
 
         self.center_pane = CenterPane::CustomUI(pane.clone().into(), handle);
 
@@ -367,9 +384,7 @@ impl EditorAPI<Workspace> for Workspace {
     }
 
     fn get_theme(&self) -> Theme {
-        let x = (*self.theme).clone();
-        dbg!(&self.theme);
-        x
+        (*self.theme).clone()
     }
 
     fn set_theme(&mut self, new_theme: Theme, cx: &mut Context<Self>) {
