@@ -4,7 +4,7 @@ members = [
   "crates/default-plugins/file-finder",
   "crates/default-plugins/typst",
   # "crates/default-plugins/vim-command-bar",
-  # "crates/default-plugins/welcome-view",
+  "crates/default-plugins/welcome-view",
   "crates/manta-api",
   "crates/manta-config",
   "crates/manta-core",
@@ -41,7 +41,7 @@ tree-sitter-org = { path = "./crates/tree-sitter-org" }
 file-finder = {path = "./crates/default-plugins/file-finder/"}
 # vim-command-bar = {path = "./crates/default-plugins/vim-command-bar/"}
 typst = { path = "./crates/default-plugins/typst/"}
-# welcome-view = {path = "./crates/default-plugins/welcome-view/"}
+welcome-view = {path = "./crates/default-plugins/welcome-view/"}
 
 [profile.dev]
 opt-level = 1

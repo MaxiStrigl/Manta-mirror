@@ -2,7 +2,9 @@ use std::{cell::Cell, rc::Rc};
 
 use crate::{Arg, command::CommandModeState};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorEvent {
+    EdiotrStarted,
     CursorMoved {
         line: usize,
         byte: usize,

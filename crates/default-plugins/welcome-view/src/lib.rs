@@ -4,7 +4,7 @@ use gpui::{
     AppContext, Context, EventEmitter, FocusHandle, InteractiveElement, ParentElement, Render,
     StatefulInteractiveElement, Styled, WeakEntity, div, rgb,
 };
-use manta_api::{EditorAPI, MantaPlugin, Theme};
+use manta_api::{EditorAPI, EditorEvent, EventSubscription, MantaPlugin, Theme};
 
 pub struct WelcomView {
     focus_handle: FocusHandle,
@@ -58,6 +58,7 @@ impl Render for WelcomView {
 
 pub struct PluginState {
     active_view: Option<WeakEntity<WelcomView>>,
+    start_subscription: Option<EventSubscription>,
 }
 
 pub struct WelcomeViewPlugin {
@@ -67,7 +68,10 @@ pub struct WelcomeViewPlugin {
 impl Default for WelcomeViewPlugin {
     fn default() -> Self {
         Self {
-            state: Arc::new(Mutex::new(PluginState { active_view: None })),
+            state: Arc::new(Mutex::new(PluginState {
+                active_view: None,
+                start_subscription: None,
+            })),
         }
     }
 }
@@ -77,32 +81,36 @@ impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for WelcomeViewPlugin {
         "welcome-gui"
     }
 
-    fn on_load(&self, api: &mut dyn manta_api::EditorAPI<T>, _cx: &mut Context<T>) {
+    fn on_load(&self, api: &mut dyn manta_api::EditorAPI<T>, cx: &mut Context<T>) {
         let state = Arc::clone(&self.state);
 
-        api.register_command(
-            "welcome:open",
-            "Open Start Screen",
-            Box::new(move |api, cx| {
-                let theme = api.get_theme();
-                let view = cx.new(|cx| WelcomView {
-                    focus_handle: cx.focus_handle(),
-                    theme,
-                });
-                let handle = view.read(cx).focus_handle.clone();
+        let subscription = api.subscribe_event(
+            Box::new(move |event, api, cx| {
+                if event == &EditorEvent::EdiotrStarted {
+                    let theme = api.get_theme();
+                    let view = cx.new(|cx| WelcomView {
+                        focus_handle: cx.focus_handle(),
+                        theme,
+                    });
+                    let handle = view.read(cx).focus_handle.clone();
 
-                cx.subscribe(&view, |workspace: &mut T, _, event, cx| match event {
-                    WelcomeEvent::ExecuteCommand(cmd) => {
-                        let _ = workspace.execute_command(cmd, cx);
-                    }
-                })
-                .detach();
+                    cx.subscribe(&view, |workspace: &mut T, _, event, cx| match event {
+                        WelcomeEvent::ExecuteCommand(cmd) => {
+                            // let _ = workspace.execute_command(cmd, cx);
+                        }
+                    })
+                    .detach();
 
-                state.lock().unwrap().active_view = Some(view.downgrade());
+                    state.lock().unwrap().active_view = Some(view.downgrade());
 
-                api.open_custom_panel(view.into(), Some(handle), cx);
+                    api.open_custom_panel(view.into(), Some(handle), cx);
+                }
             }),
+            cx,
         );
+
+        let state = Arc::clone(&self.state);
+        state.lock().unwrap().start_subscription = Some(subscription);
     }
 
     fn on_theme_change(&self, new_theme: Theme, cx: &mut Context<T>) {

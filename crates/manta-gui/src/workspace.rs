@@ -272,7 +272,7 @@ impl Workspace {
         out
     }
 
-    fn emit(&mut self, event: &EditorEvent, cx: &mut Context<Self>) {
+    pub fn emit(&mut self, event: &EditorEvent, cx: &mut Context<Self>) {
         let slots = std::mem::take(&mut self.event_slots);
         for slot in &slots {
             if slot.alive.get() {

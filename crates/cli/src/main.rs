@@ -1,14 +1,14 @@
 use std::{borrow::Cow, path::PathBuf};
 
 use gpui::*;
-use manta_api::EditorAPI;
+use manta_api::{EditorAPI, EditorEvent::EdiotrStarted};
 use manta_config::MantaConfig;
 use manta_gui::Workspace;
 
 use file_finder::FileFinderPlugin;
 use typst::TypstPlugin;
 // use vim_command_bar::VimCommandBarPlugin;
-// use welcome_view::WelcomeViewPlugin;
+use welcome_view::WelcomeViewPlugin;
 
 fn main() {
     let args: Vec<_> = std::env::args().collect();
@@ -62,8 +62,10 @@ fn main() {
                     let typst = Box::new(TypstPlugin);
                     workspace.load_plugin(typst, cx);
 
-                    //                     let welcome = Box::new(WelcomeViewPlugin::default());
-                    //                     workspace.load_plugin(welcome, cx);
+                    let welcome = Box::new(WelcomeViewPlugin::default());
+                    workspace.load_plugin(welcome, cx);
+
+                    workspace.emit(&EdiotrStarted, cx);
                 });
 
                 if is_empty_start {

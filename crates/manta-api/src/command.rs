@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 // --- Command Mode state
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandModeState {
     pub open: bool,
     pub input: String,
@@ -11,14 +11,14 @@ pub struct CommandModeState {
     pub selection: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandCompletion {
     pub kind: CompletionKind,
     pub insert: String, // what TAB inserts
     pub label: String,  // Ui displey
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompletionKind {
     Command,
     File,
