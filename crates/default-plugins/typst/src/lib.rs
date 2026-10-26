@@ -1,7 +1,7 @@
 use std::{fs, path::PathBuf, process::Command};
 
 use gpui::{AnyView, AppContext, IntoElement, ParentElement, Render, Styled, div, img, rgb};
-use manta_api::{InlineReplacement, MantaPlugin, Theme};
+use manta_api::{CommandSpec, InlineReplacement, MantaPlugin, Theme};
 
 pub struct TypstPlugin;
 
@@ -14,9 +14,8 @@ impl<T: 'static> MantaPlugin<T> for TypstPlugin {
 
     fn on_load(&self, api: &mut dyn manta_api::EditorAPI<T>, _cx: &mut gpui::prelude::Context<T>) {
         api.register_command(
-            "typst-mock:toggle",
-            "Toggle the red square",
-            Box::new(|api, cx| {
+            CommandSpec::new("typst:toggle", "Render typst block below the cursor"),
+            Box::new(|api, _, cx| {
                 let cursor = api.get_cursor_byte_offset(cx);
 
                 if let Some(id) = api.get_replacement_at_byte(MOCK_TYPST_ID.to_string(), cursor, cx)

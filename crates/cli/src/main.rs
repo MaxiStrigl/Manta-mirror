@@ -5,8 +5,8 @@ use manta_api::EditorAPI;
 use manta_config::MantaConfig;
 use manta_gui::Workspace;
 
-// use file_finder::FileFinderPlugin;
-// use typst::TypstPlugin;
+use file_finder::FileFinderPlugin;
+use typst::TypstPlugin;
 // use vim_command_bar::VimCommandBarPlugin;
 // use welcome_view::WelcomeViewPlugin;
 
@@ -53,15 +53,15 @@ fn main() {
                     cx.new(|cx| Workspace::new(cx, workspace_dir, config, initial_file));
 
                 workspace.update(cx, |workspace, cx| {
-                    //                     let finder = Box::new(FileFinderPlugin::default());
-                    //                     workspace.load_plugin(finder, cx);
-                    //
+                    let finder = Box::new(FileFinderPlugin::default());
+                    workspace.load_plugin(finder, cx);
+
                     //                     let bar = Box::new(VimCommandBarPlugin::default());
                     //                     workspace.load_plugin(bar, cx);
-                    //
-                    //                     let typst = Box::new(TypstPlugin);
-                    //                     workspace.load_plugin(typst, cx);
-                    //
+
+                    let typst = Box::new(TypstPlugin);
+                    workspace.load_plugin(typst, cx);
+
                     //                     let welcome = Box::new(WelcomeViewPlugin::default());
                     //                     workspace.load_plugin(welcome, cx);
                 });

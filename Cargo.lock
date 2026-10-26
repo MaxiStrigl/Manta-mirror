@@ -6,11 +6,13 @@ version = 4
 name = "Manta"
 version = "0.1.0"
 dependencies = [
+ "file-finder",
  "gpui",
  "manta-api",
  "manta-config",
  "manta-core",
  "manta-gui",
+ "typst",
 ]
 
 [[package]]
@@ -1766,6 +1768,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c"
 dependencies = [
  "simd-adler32",
+]
+
+[[package]]
+name = "file-finder"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "manta-api",
+ "manta_components",
 ]
 
 [[package]]
@@ -6085,6 +6096,14 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "typst"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "manta-api",
+]
 
 [[package]]
 name = "uds_windows"

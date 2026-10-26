@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use gpui::{AppContext, Context, WeakEntity};
-use manta_api::{EditorAPI, MantaPlugin, Theme};
+use manta_api::{CommandSpec, EditorAPI, MantaPlugin, Theme};
 
 use crate::ui::FileFinder;
 
@@ -45,9 +45,8 @@ impl<T: EditorAPI<T> + 'static> MantaPlugin<T> for FileFinderPlugin {
         let theme_for_command = Arc::clone(&theme_mutex);
 
         api.register_command(
-            "file-finder:open",
-            "Open File Finder",
-            Box::new(move |api, cx| {
+            CommandSpec::new("file-finder:open", "Open File Finder"),
+            Box::new(move |api, _, cx| {
                 let root_dir = api.workspace_dir();
                 let finder_theme = Arc::clone(&theme_for_command);
                 let file_finder = cx.new(|cx| FileFinder::new(cx, root_dir, finder_theme));

@@ -152,7 +152,7 @@ impl Workspace {
 
         println!("opening");
         self.command_machine.open();
-        let candidates = Vec::new(); // TODO: find completions here
+        let candidates = self.completions_for(String::new());
         self.command_machine.set_candidates(candidates);
         self.next_focus = Some(self.focus_handle.clone());
         let state = self.command_machine.state.clone();
@@ -170,6 +170,7 @@ impl Workspace {
 
                 self.command_machine.set_candidates(candidates);
                 let state = self.command_machine.state.clone();
+                dbg!(&state);
                 self.emit(&EditorEvent::CommandModeChanged(state), cx);
                 cx.notify();
             }
@@ -198,7 +199,7 @@ impl Workspace {
             "backspace" => Some(CommandKey::Backspace),
             "delete" => Some(CommandKey::Delete),
             "enter" => Some(CommandKey::Enter),
-            "espace" => Some(CommandKey::Escape),
+            "escape" => Some(CommandKey::Escape),
             "tab" => Some(CommandKey::TabCompletion),
             "up" => Some(CommandKey::HistoryPrev),
             "next" => Some(CommandKey::HistoryNext),
