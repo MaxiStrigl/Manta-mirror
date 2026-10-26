@@ -1,7 +1,6 @@
 use std::{cell::Cell, rc::Rc};
 
-use crate::command::CommandModeState;
-use serde_json::value::Value;
+use crate::{Arg, command::CommandModeState};
 
 pub enum EditorEvent {
     CursorMoved {
@@ -13,6 +12,7 @@ pub enum EditorEvent {
     CommandModeChanged(CommandModeState),
     CommandExecuted {
         id: String,
+        args: Vec<Arg>,
         result: Result<(), String>,
     },
 }

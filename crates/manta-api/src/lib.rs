@@ -6,7 +6,10 @@ use std::path::PathBuf;
 use gpui::{AnyView, Context, FocusHandle};
 
 pub use crate::event::{EditorEvent, EventSubscription};
-pub use command::{Arg, CommandSpec, ParamKind};
+pub use command::{
+    Arg, CommandCompletion, CommandEffect, CommandKey, CommandMachine, CommandModeState,
+    CommandSpec, CompletionKind, LineTarget, ParamKind, ParamSpec, ParamStyle,
+};
 pub use manta_config::theme::Theme;
 
 #[derive(Debug, Clone)]
@@ -39,11 +42,13 @@ pub trait EditorAPI<T> {
         cx: &mut Context<T>,
     ) -> Result<(), String>;
 
+    fn open_command_mode(&mut self, cx: &mut Context<T>);
+
     // Events
 
     fn subscribe_event(
         &mut self,
-        handler: Box<dyn Fn(&EditorEvent, &mut Context<T>)>,
+        handler: Box<dyn Fn(&EditorEvent, &mut dyn EditorAPI<T>, &mut Context<T>)>,
         cx: &mut Context<T>,
     ) -> EventSubscription;
 

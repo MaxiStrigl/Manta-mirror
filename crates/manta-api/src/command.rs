@@ -1,21 +1,212 @@
 use std::path::PathBuf;
 
+// --- Command Mode state
+
+#[derive(Debug, Clone)]
 pub struct CommandModeState {
     pub open: bool,
-    pub prompt: String,
+    pub input: String,
+    pub cursor: usize,
     pub candidates: Vec<CommandCompletion>,
     pub selection: usize,
 }
 
+#[derive(Debug, Clone)]
 pub struct CommandCompletion {
     pub kind: CompletionKind,
-    pub insert: String,
-    pub lable: String,
+    pub insert: String, // what TAB inserts
+    pub label: String,  // Ui displey
 }
 
+#[derive(Debug, Clone)]
 pub enum CompletionKind {
     Command,
     File,
+}
+
+// --- inputs
+
+#[derive(Debug, Clone)]
+pub enum CommandKey {
+    Input(char),
+    Backspace,
+    Delete,
+    Enter,
+    Escape,
+    TabCompletion,
+    PrevCandidate,
+    NextCandidate,
+    HistoryPrev,
+    HistoryNext,
+    MoveLeft,
+    MoveRight,
+    Start,
+    End,
+}
+
+#[derive(Debug, Clone)]
+pub enum CommandEffect {
+    Updated,
+    Submited(String),
+    Canceled,
+}
+
+// --- machine
+
+pub struct CommandMachine {
+    pub state: CommandModeState,
+    history: Vec<String>,
+    history_index: usize,
+}
+
+impl CommandMachine {
+    pub fn new() -> Self {
+        Self {
+            state: CommandModeState {
+                open: false,
+                input: String::new(),
+                cursor: 0,
+                candidates: Vec::new(),
+                selection: 0,
+            },
+            history: Vec::new(),
+            history_index: 0,
+        }
+    }
+
+    pub fn open(&mut self) {
+        self.state = CommandModeState {
+            open: true,
+            input: String::new(),
+            cursor: 0,
+            candidates: Vec::new(),
+            selection: 0,
+        };
+        self.history_index = self.history.len();
+    }
+
+    pub fn close(&mut self) {
+        self.state.open = false;
+        self.state.input.clear();
+        self.state.candidates.clear();
+        self.state.selection = 0;
+    }
+
+    pub fn set_candidates(&mut self, candidates: Vec<CommandCompletion>) {
+        self.state.candidates = candidates;
+    }
+
+    pub fn apply(&mut self, key: CommandKey) -> CommandEffect {
+        if !self.state.open {
+            return CommandEffect::Canceled;
+        }
+        dbg!(&key);
+
+        match key {
+            CommandKey::Input(ch) => {
+                self.state.input.insert(self.state.cursor, ch);
+                self.state.cursor += ch.len_utf8();
+                CommandEffect::Updated
+            }
+            CommandKey::Backspace => {
+                if let Some(c) = self.state.input[..self.state.cursor].chars().last() {
+                    let prev = self.state.cursor - c.len_utf8();
+                    self.state.input.replace_range(prev..self.state.cursor, "");
+                    self.state.cursor = prev;
+                }
+                CommandEffect::Updated
+            }
+            CommandKey::Delete => {
+                if let Some(c) = self.state.input[self.state.cursor..].chars().next() {
+                    let next = self.state.cursor + c.len_utf8();
+                    self.state.input.replace_range(self.state.cursor..next, "");
+                }
+                CommandEffect::Updated
+            }
+            CommandKey::Enter => {
+                let cmd = self.state.input.to_owned();
+                self.close();
+                if cmd.trim().is_empty() {
+                    return CommandEffect::Canceled;
+                }
+                self.push_history(cmd.trim().to_owned());
+                CommandEffect::Submited(cmd)
+            }
+            CommandKey::Escape => {
+                self.close();
+                CommandEffect::Canceled
+            }
+            CommandKey::TabCompletion => {
+                if let Some(c) = self.state.candidates.get(self.state.selection).cloned() {
+                    self.state.input = c.insert;
+                    self.state.cursor = self.state.input.len();
+                    self.state.candidates.clear();
+                }
+                CommandEffect::Updated
+            }
+            CommandKey::PrevCandidate => {
+                if !self.state.candidates.is_empty() {
+                    let n = self.state.candidates.len();
+                    self.state.selection = (self.state.selection + n - 1) % n;
+                }
+                CommandEffect::Updated
+            }
+            CommandKey::NextCandidate => {
+                if !self.state.candidates.is_empty() {
+                    let n = self.state.candidates.len();
+                    self.state.selection = (self.state.selection + 1) % n;
+                }
+                CommandEffect::Updated
+            }
+            CommandKey::HistoryPrev => {
+                if !self.history.is_empty() && self.history_index > 0 {
+                    self.history_index -= 1;
+                    self.state.input = self.history[self.history_index].clone();
+                    self.state.cursor = self.state.input.len();
+                }
+                CommandEffect::Updated
+            }
+            CommandKey::HistoryNext => {
+                if self.history_index < self.history.len() {
+                    self.history_index += 1;
+                    self.state.input = self
+                        .history
+                        .get(self.history_index)
+                        .cloned()
+                        .unwrap_or_default();
+                    self.state.cursor = self.state.input.len();
+                }
+                CommandEffect::Updated
+            }
+            CommandKey::MoveLeft => {
+                if let Some(c) = self.state.input[..self.state.cursor].chars().last() {
+                    self.state.cursor -= c.len_utf8();
+                }
+                CommandEffect::Updated
+            }
+            CommandKey::MoveRight => {
+                if let Some(c) = self.state.input[self.state.cursor..].chars().next() {
+                    self.state.cursor += c.len_utf8();
+                }
+                CommandEffect::Updated
+            }
+            CommandKey::Start => {
+                self.state.cursor = 0;
+                CommandEffect::Updated
+            }
+            CommandKey::End => {
+                self.state.cursor = self.state.input.len();
+                CommandEffect::Updated
+            }
+        }
+    }
+
+    pub fn push_history(&mut self, entry: String) {
+        if entry.is_empty() || self.history.last() == Some(&entry) {
+            return;
+        }
+        self.history.push(entry);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

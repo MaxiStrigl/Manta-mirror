@@ -20,7 +20,7 @@ use modalkit::{
     editing::application::EmptyInfo, env::vim::keybindings::default_vim_keys, key::TerminalKey,
 };
 
-use crate::workspace::EditorEvent;
+use manta_api::EditorEvent;
 
 enum BufferEvent {
     LinesInserted { row: usize, line_delta: usize },
@@ -248,10 +248,10 @@ impl VimEditor {
         let terminal_key = Self::translate_key(event);
 
         if self.vim_machine.mode() == VimMode::Normal {
-            if event.keystroke.key.as_str() == ":" {
-                cx.emit(EditorEvent::ExecuteCommand("command-bar:open".to_string()));
-                return;
-            }
+            // if event.keystroke.key.as_str() == ":" {
+            //     cx.emit(EditorEvent::ExecuteCommand("command-bar:open".to_string()));
+            //     return;
+            // }
 
             if terminal_key == TerminalKey::from(KeyCode::Tab) {
                 self.toggle_fold(cx);
@@ -280,9 +280,9 @@ impl VimEditor {
         self.scroll_handle.scroll_to_item(new_line_idx, strategy);
         self.last_activity = Instant::now();
 
-        cx.emit(EditorEvent::ExecuteCommand(
-            "command-bar:update".to_string(),
-        ));
+        // cx.emit(EditorEvent::ExecuteCommand(
+        //     "command-bar:update".to_string(),
+        // ));
 
         cx.notify();
     }

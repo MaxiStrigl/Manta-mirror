@@ -3,14 +3,14 @@ use gpui::{
     ParentElement, Render, Styled, Window, div, rgb,
 };
 
-use crate::workspace::EditorEvent;
+// use crate::workspace::EditorEvent;
 
 pub struct CustomPane {
     pub inner_view: AnyView,
     pub focus_handle: FocusHandle,
 }
 
-impl EventEmitter<EditorEvent> for CustomPane {}
+// impl EventEmitter<EditorEvent> for CustomPane {}
 
 impl CustomPane {
     pub fn new(inner_view: AnyView, cx: &mut Context<Self>) -> Self {
@@ -28,7 +28,7 @@ impl CustomPane {
     ) {
         match event.keystroke.key.as_str() {
             ":" => {
-                cx.emit(EditorEvent::ExecuteCommand("command-bar:open".to_string()));
+                // cx.emit(EditorEvent::ExecuteCommand("command-bar:open".to_string()));
             }
             _ => {}
         }

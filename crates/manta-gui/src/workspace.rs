@@ -1,12 +1,17 @@
 use std::cell::Cell;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::default;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{AnyView, Window};
+use gpui::{AnyView, KeyBinding, Window, actions};
 use gpui::{Context, Entity, EventEmitter, FocusHandle, IntoElement, div, prelude::*, rgb};
-use manta_api::{Arg, CommandSpec, EditorAPI, EventSubscription, MantaPlugin};
+use manta_api::{
+    Arg, CommandCompletion, CommandKey, CommandMachine, CommandSpec, CompletionKind, EditorAPI,
+    EditorEvent, EventSubscription, MantaPlugin,
+};
 use manta_config::theme::Theme;
 use manta_config::{MantaConfig, Settings};
 use manta_core::buffer::Buffer;
@@ -15,7 +20,7 @@ use crate::{CustomPane, VimEditor};
 
 pub struct EventSlot<E> {
     alive: Rc<Cell<bool>>,
-    handler: Box<dyn Fn(&E, &mut Context<Workspace>)>,
+    handler: Box<dyn Fn(&E, &mut dyn EditorAPI<Workspace>, &mut Context<Workspace>)>,
 }
 
 pub enum CenterPane {
@@ -23,7 +28,7 @@ pub enum CenterPane {
     CustomUI(AnyView, FocusHandle),
 }
 
-struct CommandEntry {
+pub struct CommandEntry {
     spec: CommandSpec,
     action: Box<dyn Fn(&mut dyn EditorAPI<Workspace>, &[Arg], &mut Context<Workspace>)>,
 }
@@ -36,13 +41,19 @@ pub struct Workspace {
     pub next_focus: Option<FocusHandle>,
     pub bottom_bar: Option<AnyView>,
 
+    pub focus_handle: FocusHandle,
+    pub command_machine: CommandMachine,
+
     pub commands: HashMap<&'static str, CommandEntry>, // key = spec.id (core:save)
     pub event_slots: Vec<EventSlot<manta_api::EditorEvent>>,
+
     // here plugin event slots later
     pub plugins: Vec<Box<dyn MantaPlugin<Workspace>>>,
     pub settings: Arc<Settings>,
     pub theme: Arc<Theme>,
 }
+
+actions!(workspace, [OpenCommandMode]);
 
 impl Workspace {
     pub fn new(
@@ -58,6 +69,12 @@ impl Workspace {
                 Buffer::new()
             }
         });
+
+        cx.bind_keys([KeyBinding::new(
+            "ctrl-p",
+            OpenCommandMode,
+            Some("Workspace"),
+        )]);
 
         let settings = Arc::new(config.settings);
         let theme = Arc::new(config.theme);
@@ -84,6 +101,8 @@ impl Workspace {
             settings,
             theme,
             event_slots: Vec::new(),
+            focus_handle: cx.focus_handle(),
+            command_machine: CommandMachine::new(),
         };
         workspace.register_core_commands();
         workspace
@@ -125,6 +144,143 @@ impl Workspace {
             }),
         );
     }
+
+    fn open_command_mode(&mut self, cx: &mut Context<Self>) {
+        if self.command_machine.state.open {
+            return;
+        }
+
+        println!("opening");
+        self.command_machine.open();
+        let candidates = Vec::new(); // TODO: find completions here
+        self.command_machine.set_candidates(candidates);
+        self.next_focus = Some(self.focus_handle.clone());
+        let state = self.command_machine.state.clone();
+        self.emit(&EditorEvent::CommandModeChanged(state), cx);
+        cx.notify();
+    }
+
+    fn apply_command_key(&mut self, key: CommandKey, cx: &mut Context<Self>) {
+        match self.command_machine.apply(key) {
+            manta_api::CommandEffect::Updated => {
+                let candidates = {
+                    let input = self.command_machine.state.input.clone();
+                    self.completions_for(input)
+                };
+
+                self.command_machine.set_candidates(candidates);
+                let state = self.command_machine.state.clone();
+                self.emit(&EditorEvent::CommandModeChanged(state), cx);
+                cx.notify();
+            }
+            manta_api::CommandEffect::Submited(line) => self.submit_command(&line, cx),
+            manta_api::CommandEffect::Canceled => self.exit_command_mode(cx),
+        }
+    }
+
+    fn submit_command(&mut self, line: &str, cx: &mut Context<Self>) {
+        let (id, args, result) = self.run_command(line, cx);
+        self.exit_command_mode(cx);
+        self.emit(&EditorEvent::CommandExecuted { id, args, result }, cx);
+        cx.notify();
+    }
+
+    fn exit_command_mode(&mut self, cx: &mut Context<Self>) {
+        let state = self.command_machine.state.clone();
+        self.emit(&EditorEvent::CommandModeChanged(state), cx);
+        self.focus_main_panel(cx);
+        cx.notify();
+    }
+
+    fn command_key_from_event(&self, event: gpui::KeyDownEvent) -> Option<CommandKey> {
+        let key = event.keystroke.key.as_str();
+        match key {
+            "backspace" => Some(CommandKey::Backspace),
+            "delete" => Some(CommandKey::Delete),
+            "enter" => Some(CommandKey::Enter),
+            "espace" => Some(CommandKey::Escape),
+            "tab" => Some(CommandKey::TabCompletion),
+            "up" => Some(CommandKey::HistoryPrev),
+            "next" => Some(CommandKey::HistoryNext),
+            "left" => Some(CommandKey::MoveLeft),
+            "right" => Some(CommandKey::MoveRight),
+            "home" => Some(CommandKey::Start),
+            "end" => Some(CommandKey::End),
+            _ => Some(CommandKey::Input(key.chars().next()?)),
+        }
+    }
+
+    fn run_command(
+        &mut self,
+        line: &str,
+        cx: &mut Context<Self>,
+    ) -> (String, Vec<Arg>, Result<(), String>) {
+        let tokens: Vec<&str> = line.trim().split_whitespace().collect();
+        let Some(id) = tokens.first().copied() else {
+            return (String::new(), Vec::new(), Err("empty command".into()));
+        };
+
+        let id_owned = id.to_owned();
+        let Some(entry) = self.commands.get(id) else {
+            return (
+                String::new(),
+                Vec::new(),
+                Err(format!("Command: '{id}' not found.")),
+            );
+        };
+
+        match entry.spec.bind_args(&tokens[1..]) {
+            Ok(args) => (id_owned, args.clone(), self.execute_command(&id, &args, cx)),
+            Err(e) => (String::new(), Vec::new(), Err(e)),
+        }
+    }
+
+    fn completions_for(&mut self, input: String) -> Vec<CommandCompletion> {
+        if !input
+            .split_whitespace()
+            .next()
+            .is_some_and(|h| h.len() < input.trim_end().len())
+        {
+            return self
+                .commands
+                .keys()
+                .filter(|id| id.starts_with(&input))
+                .map(|id| CommandCompletion {
+                    kind: CompletionKind::Command,
+                    insert: id.to_string(),
+                    label: id.to_string(),
+                })
+                .collect();
+        }
+
+        let last = input.split_whitespace().next_back().unwrap_or("");
+        let mut out = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&self.workspace_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with(last) {
+                    out.push(CommandCompletion {
+                        kind: CompletionKind::File,
+                        insert: name.clone(),
+                        label: name,
+                    });
+                }
+            }
+        }
+
+        out
+    }
+
+    fn emit(&mut self, event: &EditorEvent, cx: &mut Context<Self>) {
+        let slots = std::mem::take(&mut self.event_slots);
+        for slot in &slots {
+            if slot.alive.get() {
+                (slot.handler)(&event, self as &mut dyn EditorAPI<Workspace>, cx);
+            }
+        }
+        self.event_slots
+            .extend(slots.into_iter().filter(|s| s.alive.get()));
+    }
 }
 
 impl EditorAPI<Workspace> for Workspace {
@@ -147,8 +303,10 @@ impl EditorAPI<Workspace> for Workspace {
 
     fn subscribe_event(
         &mut self,
-        handler: Box<dyn Fn(&manta_api::EditorEvent, &mut Context<Workspace>)>,
-        cx: &mut Context<Workspace>,
+        handler: Box<
+            dyn Fn(&manta_api::EditorEvent, &mut dyn EditorAPI<Workspace>, &mut Context<Workspace>),
+        >,
+        _cx: &mut Context<Workspace>,
     ) -> manta_api::EventSubscription {
         self.event_slots.retain(|slot| slot.alive.get());
         let alive = Rc::new(Cell::new(true));
@@ -405,10 +563,14 @@ impl EditorAPI<Workspace> for Workspace {
         self.plugins = plugins;
         cx.notify();
     }
+
+    fn open_command_mode(&mut self, cx: &mut Context<Workspace>) {
+        Workspace::open_command_mode(self, cx);
+    }
 }
 
 impl Render for Workspace {
-    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let center_content = match &self.center_pane {
             CenterPane::Editor(editor) => div().size_full().child(editor.clone()),
             CenterPane::CustomUI(view, _) => div().size_full().child(view.clone()),
@@ -419,6 +581,18 @@ impl Render for Workspace {
         }
 
         let mut layout = div()
+            .track_focus(&self.focus_handle)
+            .key_context("Workspace")
+            .on_key_down(cx.listener(|workspace, event: &gpui::KeyDownEvent, _, cx| {
+                if workspace.command_machine.state.open {
+                    if let Some(key) = workspace.command_key_from_event(event.clone()) {
+                        workspace.apply_command_key(key, cx);
+                    }
+                }
+            }))
+            .on_action(cx.listener(|workspace, _: &OpenCommandMode, _, cx| {
+                Workspace::open_command_mode(workspace, cx);
+            }))
             .flex()
             .flex_col()
             .size_full()

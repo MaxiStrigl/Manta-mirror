@@ -1,13 +1,14 @@
 use std::{borrow::Cow, path::PathBuf};
 
-use file_finder::FileFinderPlugin;
 use gpui::*;
 use manta_api::EditorAPI;
 use manta_config::MantaConfig;
 use manta_gui::Workspace;
-use typst::TypstPlugin;
-use vim_command_bar::VimCommandBarPlugin;
-use welcome_view::WelcomeViewPlugin;
+
+// use file_finder::FileFinderPlugin;
+// use typst::TypstPlugin;
+// use vim_command_bar::VimCommandBarPlugin;
+// use welcome_view::WelcomeViewPlugin;
 
 fn main() {
     let args: Vec<_> = std::env::args().collect();
@@ -52,23 +53,23 @@ fn main() {
                     cx.new(|cx| Workspace::new(cx, workspace_dir, config, initial_file));
 
                 workspace.update(cx, |workspace, cx| {
-                    let finder = Box::new(FileFinderPlugin::default());
-                    workspace.load_plugin(finder, cx);
-
-                    let bar = Box::new(VimCommandBarPlugin::default());
-                    workspace.load_plugin(bar, cx);
-
-                    let typst = Box::new(TypstPlugin);
-                    workspace.load_plugin(typst, cx);
-
-                    let welcome = Box::new(WelcomeViewPlugin::default());
-                    workspace.load_plugin(welcome, cx);
+                    //                     let finder = Box::new(FileFinderPlugin::default());
+                    //                     workspace.load_plugin(finder, cx);
+                    //
+                    //                     let bar = Box::new(VimCommandBarPlugin::default());
+                    //                     workspace.load_plugin(bar, cx);
+                    //
+                    //                     let typst = Box::new(TypstPlugin);
+                    //                     workspace.load_plugin(typst, cx);
+                    //
+                    //                     let welcome = Box::new(WelcomeViewPlugin::default());
+                    //                     workspace.load_plugin(welcome, cx);
                 });
 
                 if is_empty_start {
-                    workspace.update(cx, |workspace, cx| {
-                        let _ = workspace.execute_command("welcome:open", cx);
-                    })
+                    // workspace.update(cx, |workspace, cx| {
+                    //     let _ = workspace.execute_command("welcome:open", cx);
+                    // })
                 }
 
                 workspace
