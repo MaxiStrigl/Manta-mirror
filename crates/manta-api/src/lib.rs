@@ -1,15 +1,20 @@
 mod command;
 mod event;
 
-use std::path::PathBuf;
+use std::{
+    any::{Any, TypeId},
+    path::PathBuf,
+};
 
 use gpui::{AnyView, Context, FocusHandle};
 
+use crate::event::EventPayload;
 pub use crate::event::{EditorEvent, EventSubscription};
 pub use command::{
     Arg, CommandCompletion, CommandEffect, CommandKey, CommandMachine, CommandModeState,
     CommandSpec, CompletionKind, LineTarget, ParamKind, ParamSpec, ParamStyle,
 };
+pub use event::EventHub;
 pub use manta_config::theme::Theme;
 
 #[derive(Debug, Clone)]
@@ -28,7 +33,7 @@ pub trait MantaPlugin<T> {
     fn on_theme_change(&self, new_theme: Theme, cx: &mut Context<T>);
 }
 
-pub trait EditorAPI<T> {
+pub trait EditorAPI<T: 'static> {
     // Commands
     fn register_command(
         &mut self,
@@ -46,9 +51,10 @@ pub trait EditorAPI<T> {
 
     // Events
 
-    fn subscribe_event(
+    fn subscribe(
         &mut self,
-        handler: Box<dyn Fn(&EditorEvent, &mut dyn EditorAPI<T>, &mut Context<T>)>,
+        id: TypeId,
+        handler: Box<dyn Fn(&dyn Any, &mut dyn EditorAPI<T>, &mut Context<T>)>,
         cx: &mut Context<T>,
     ) -> EventSubscription;
 
@@ -92,4 +98,28 @@ pub trait EditorAPI<T> {
     fn get_buffer_path(&self, cx: &mut Context<T>) -> Option<PathBuf>;
     fn get_insert_mode_status(&self, cx: &mut Context<T>) -> bool;
     fn get_theme(&self) -> Theme;
+}
+
+pub trait EventSubscriber<T: 'static> {
+    fn subcribe<E: EventPayload + Any>(
+        &mut self,
+        handler: Box<dyn Fn(&E, &mut dyn EditorAPI<T>, &mut Context<T>)>,
+        cx: &mut Context<T>,
+    ) -> EventSubscription;
+}
+
+impl<T: 'static> EventSubscriber<T> for &mut dyn EditorAPI<T> {
+    fn subcribe<E: EventPayload + Any>(
+        &mut self,
+        handler: Box<dyn Fn(&E, &mut dyn EditorAPI<T>, &mut Context<T>)>,
+        cx: &mut Context<T>,
+    ) -> EventSubscription {
+        let api: &mut dyn EditorAPI<T> = &mut **self;
+        let wrapper: Box<dyn Fn(&dyn Any, &mut dyn EditorAPI<T>, &mut Context<T>)> =
+            Box::new(move |any, api, cx| {
+                let event = any.downcast_ref::<E>().expect("type mismatch");
+                handler(event, api, cx);
+            });
+        api.subscribe(TypeId::of::<E>(), wrapper, cx)
+    }
 }

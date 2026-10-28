@@ -10,18 +10,13 @@ use gpui::{AnyView, KeyBinding, Window, actions};
 use gpui::{Context, Entity, EventEmitter, FocusHandle, IntoElement, div, prelude::*, rgb};
 use manta_api::{
     Arg, CommandCompletion, CommandKey, CommandMachine, CommandSpec, CompletionKind, EditorAPI,
-    EditorEvent, EventSubscription, MantaPlugin,
+    EditorEvent, EventHub, EventSubscription, MantaPlugin,
 };
 use manta_config::theme::Theme;
 use manta_config::{MantaConfig, Settings};
 use manta_core::buffer::Buffer;
 
 use crate::{CustomPane, VimEditor};
-
-pub struct EventSlot<E> {
-    alive: Rc<Cell<bool>>,
-    handler: Box<dyn Fn(&E, &mut dyn EditorAPI<Workspace>, &mut Context<Workspace>)>,
-}
 
 pub enum CenterPane {
     Editor(Entity<VimEditor>),
@@ -45,7 +40,7 @@ pub struct Workspace {
     pub command_machine: CommandMachine,
 
     pub commands: HashMap<&'static str, CommandEntry>, // key = spec.id (core:save)
-    pub event_slots: Vec<EventSlot<manta_api::EditorEvent>>,
+    pub event_hub: EventHub<Workspace>,
 
     // here plugin event slots later
     pub plugins: Vec<Box<dyn MantaPlugin<Workspace>>>,
@@ -100,7 +95,7 @@ impl Workspace {
             plugins: Vec::new(),
             settings,
             theme,
-            event_slots: Vec::new(),
+            event_hub: EventHub::new(),
             focus_handle: cx.focus_handle(),
             command_machine: CommandMachine::new(),
         };
@@ -273,14 +268,10 @@ impl Workspace {
     }
 
     pub fn emit(&mut self, event: &EditorEvent, cx: &mut Context<Self>) {
-        let slots = std::mem::take(&mut self.event_slots);
-        for slot in &slots {
-            if slot.alive.get() {
-                (slot.handler)(&event, self as &mut dyn EditorAPI<Workspace>, cx);
-            }
-        }
-        self.event_slots
-            .extend(slots.into_iter().filter(|s| s.alive.get()));
+        let mut hub = std::mem::take(&mut self.event_hub);
+        hub.dispatch(event, self as &mut dyn EditorAPI<Workspace>, cx);
+        self.event_hub = hub;
+        cx.notify();
     }
 }
 
@@ -302,13 +293,14 @@ impl EditorAPI<Workspace> for Workspace {
         Workspace::execute_command(self, id, args, cx)
     }
 
-    fn subscribe_event(
+    fn subscribe_event<E: EventPayload>(
         &mut self,
         handler: Box<
             dyn Fn(&manta_api::EditorEvent, &mut dyn EditorAPI<Workspace>, &mut Context<Workspace>),
         >,
         _cx: &mut Context<Workspace>,
     ) -> manta_api::EventSubscription {
+        self.event_hub.subscribe(handler);
         self.event_slots.retain(|slot| slot.alive.get());
         let alive = Rc::new(Cell::new(true));
 
